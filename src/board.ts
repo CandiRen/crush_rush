@@ -21,6 +21,7 @@ export interface Tile {
 }
 
 export type Board = (Tile | null)[][];
+export type TileLayout = TileKind[][];
 
 export interface CascadeDetail {
   removed: Position[];
@@ -95,6 +96,21 @@ export function createInitialBoard(size = BOARD_SIZE): Board {
   }
 
   throw new Error("Unable to generate a valid starting board");
+}
+
+export function createBoardFromLayout(layout: TileLayout): Board {
+  const height = layout.length;
+  const width = layout[0]?.length ?? 0;
+  if (height === 0 || width === 0) {
+    throw new Error("Layout must have at least one row and one column");
+  }
+
+  return layout.map((row) => {
+    if (row.length !== width) {
+      throw new Error("All rows in the layout must have the same length");
+    }
+    return row.map((kind) => createTile(kind));
+  });
 }
 
 function createsMatchAt(board: Board, row: number, col: number, kind: TileKind): boolean {

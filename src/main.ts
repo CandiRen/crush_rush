@@ -1,5 +1,6 @@
 import { Board, Position, Tile, TileKind, SwapFrame } from "./board";
 import { Game, GameStatus } from "./game";
+import { LEVELS, LevelDefinition } from "./levels";
 
 interface TileTheme {
   label: string;
@@ -60,7 +61,8 @@ const TILE_THEME: Record<TileKind, TileTheme> = {
   }
 };
 
-const game = new Game();
+let currentLevelIndex = 0;
+const game = new Game(LEVELS[currentLevelIndex]);
 const app = document.getElementById("app");
 
 if (!app) {
@@ -72,30 +74,43 @@ const hud = document.createElement("div");
 const boardElement = document.createElement("div");
 const infoBanner = document.createElement("div");
 const stateBanner = document.createElement("div");
+const stateMessage = document.createElement("div");
+const stateStars = document.createElement("div");
+const stateDetail = document.createElement("div");
+const stateActions = document.createElement("div");
 const bottomBar = document.createElement("div");
 const restartButton = document.createElement("button");
 const tutorialOverlay = document.createElement("div");
+const nextButton = document.createElement("button");
+const retryButton = document.createElement("button");
 
 declare global {
   interface Window {
     crushRush?: {
       debugBoard(): Board;
       skipTutorial(): void;
+      loadLevel(index: number): void;
     };
   }
 }
 
 let selected: Position | null = null;
-let infoMessage = "Cocokkan tiga permen atau lebih!";
+let infoMessage = LEVELS[currentLevelIndex].description ?? "Cocokkan tiga permen atau lebih!";
 let playback: PlaybackState | null = null;
 let isAnimating = false;
 let tutorialActive = true;
+let tutorialSeen = false;
 
 shell.className = "game-shell";
 hud.className = "hud";
 boardElement.className = "board";
 infoBanner.className = "status-banner";
 stateBanner.className = "status-banner hidden";
+stateMessage.className = "state-message";
+stateStars.className = "state-stars";
+stateDetail.className = "state-detail";
+stateActions.className = "state-actions";
+stateBanner.append(stateMessage, stateStars, stateDetail, stateActions);
 bottomBar.className = "hud";
 restartButton.className = "primary";
 restartButton.textContent = "Mulai Ulang";
@@ -103,13 +118,19 @@ tutorialOverlay.className = "tutorial-overlay";
 tutorialOverlay.innerHTML = `
   <div>
     <h3>Selamat datang di Crush Rush!</h3>
-    <p>Pilih dua permen bertetangga untuk menukarnya. Bentuk garis tiga atau lebih untuk mendapatkan skor.</p>
+    <p>Tukarkan dua permen bertetangga untuk membentuk garis tiga atau lebih dan kumpulkan skor.</p>
     <p><strong>Klik di mana saja</strong> untuk memulai level pertama.</p>
   </div>
 `;
 
+nextButton.className = "primary";
+nextButton.textContent = "Level Berikutnya";
+retryButton.className = "ghost";
+retryButton.textContent = "Ulangi Level";
+
 tutorialOverlay.addEventListener("click", () => {
   tutorialActive = false;
+  tutorialSeen = true;
   infoMessage = "Pilih dua permen bertetangga untuk ditukar.";
   render();
 });
@@ -118,8 +139,29 @@ restartButton.addEventListener("click", () => {
   cancelPlayback();
   game.reset();
   selected = null;
-  infoMessage = "Level dimulai ulang.";
+  isAnimating = false;
+  tutorialActive = currentLevelIndex === 0 && !tutorialSeen;
+  infoMessage = tutorialActive
+    ? "Baca instruksi lalu klik untuk mulai."
+    : "Level dimulai ulang.";
   render();
+});
+
+nextButton.addEventListener("click", () => {
+  if (!hasNextLevel()) {
+    return;
+  }
+  loadLevel(currentLevelIndex + 1, {
+    message: "Level baru dimulai. Kejar skor terbaik!",
+    showTutorial: false
+  });
+});
+
+retryButton.addEventListener("click", () => {
+  loadLevel(currentLevelIndex, {
+    message: "Coba lagi. Pelajari pola cascade!",
+    showTutorial: false
+  });
 });
 
 bottomBar.append(restartButton);
@@ -131,10 +173,38 @@ window.crushRush = {
     return structuredClone(game.getBoard());
   },
   skipTutorial() {
+    tutorialSeen = true;
     tutorialActive = false;
     render();
+  },
+  loadLevel(index: number) {
+    loadLevel(index, { showTutorial: index === 0 && !tutorialSeen });
   }
 };
+
+function loadLevel(index: number, options?: { showTutorial?: boolean; message?: string }): void {
+  if (index < 0 || index >= LEVELS.length) {
+    console.warn("Level index di luar jangkauan", index);
+    return;
+  }
+
+  cancelPlayback();
+  currentLevelIndex = index;
+  const level = LEVELS[currentLevelIndex];
+  game.setLevel(level);
+  selected = null;
+  isAnimating = false;
+
+  const shouldShowTutorial = options?.showTutorial ?? (index === 0 && !tutorialSeen);
+  tutorialActive = shouldShowTutorial;
+  if (tutorialActive) {
+    infoMessage = "Ikuti instruksi pada overlay untuk memulai.";
+  } else {
+    infoMessage = options?.message ?? level.description ?? "Selamat bermain.";
+  }
+
+  render();
+}
 
 function render(): void {
   const status = game.getStatus();
@@ -153,17 +223,7 @@ function render(): void {
   });
 
   infoBanner.textContent = infoMessage;
-
-  if (status === "won") {
-    stateBanner.textContent = "Level selesai! Target skor tercapai.";
-    stateBanner.classList.remove("hidden");
-  } else if (status === "lost") {
-    stateBanner.textContent = "Kesempatan habis. Coba lagi!";
-    stateBanner.classList.remove("hidden");
-  } else {
-    stateBanner.classList.add("hidden");
-    stateBanner.textContent = "";
-  }
+  renderStateBanner(status);
 
   if (tutorialActive) {
     tutorialOverlay.classList.remove("hidden");
@@ -174,16 +234,25 @@ function render(): void {
 
 function renderHud(): void {
   hud.innerHTML = "";
-  const score = document.createElement("div");
-  score.textContent = `Skor: ${game.getScore().toLocaleString("id-ID")}`;
+  const level = LEVELS[currentLevelIndex];
 
-  const moves = document.createElement("div");
-  moves.textContent = `Langkah: ${game.getMovesLeft()}`;
+  hud.append(
+    createHudItem(`Level ${level.id}`, level.name),
+    createHudItem("Skor", game.getScore().toLocaleString("id-ID")),
+    createHudItem("Langkah", `${game.getMovesLeft()} / ${level.moves}`),
+    createHudItem("Target", game.getTargetScore().toLocaleString("id-ID"))
+  );
+}
 
-  const target = document.createElement("div");
-  target.textContent = `Target: ${game.getTargetScore().toLocaleString("id-ID")}`;
-
-  hud.append(score, moves, target);
+function createHudItem(label: string, value: string): HTMLDivElement {
+  const container = document.createElement("div");
+  container.className = "hud-item";
+  const title = document.createElement("span");
+  title.textContent = label;
+  const strong = document.createElement("strong");
+  strong.textContent = value;
+  container.append(title, strong);
+  return container;
 }
 
 function renderBoard(board: Board, status: GameStatus, options: RenderOptions = {}): void {
@@ -251,7 +320,7 @@ function onTileClick(position: Position): void {
   }
 
   if (game.getStatus() !== "playing") {
-    infoMessage = "Level sudah selesai. Tekan Mulai Ulang.";
+    infoMessage = "Level sudah selesai. Gunakan tombol tindakan.";
     render();
     return;
   }
@@ -350,6 +419,52 @@ function cancelPlayback(): void {
   }
   playback = null;
   isAnimating = false;
+}
+
+function renderStateBanner(status: GameStatus): void {
+  if (status === "won") {
+    const level = LEVELS[currentLevelIndex];
+    const stars = game.getStarCount();
+    stateMessage.textContent = `Level ${level.id} selesai! Target tercapai.`;
+    stateStars.textContent = renderStars(stars);
+    stateDetail.textContent = level.description ?? "Hebat! Lanjutkan progresmu.";
+    stateActions.replaceChildren();
+    if (hasNextLevel()) {
+      stateActions.append(nextButton);
+    }
+    stateBanner.classList.remove("hidden");
+    return;
+  }
+
+  if (status === "lost") {
+    stateMessage.textContent = "Kesempatan habis. Coba lagi!";
+    stateStars.textContent = renderStars(game.getStarCount());
+    stateDetail.textContent = "Gunakan langkah secara efisien untuk mencapai target.";
+    stateActions.replaceChildren(retryButton);
+    stateBanner.classList.remove("hidden");
+    return;
+  }
+
+  stateBanner.classList.add("hidden");
+  stateMessage.textContent = "";
+  stateStars.textContent = "";
+  stateDetail.textContent = "";
+  stateActions.replaceChildren();
+}
+
+function renderStars(filled: number, total = 3): string {
+  let output = "";
+  for (let i = 0; i < total; i++) {
+    output += i < filled ? "★" : "☆";
+    if (i < total - 1) {
+      output += " ";
+    }
+  }
+  return output;
+}
+
+function hasNextLevel(): boolean {
+  return currentLevelIndex < LEVELS.length - 1;
 }
 
 function positionKey(position: Position): string {
