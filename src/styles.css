@@ -121,6 +121,10 @@ body {
   background: rgba(244, 114, 182, 0.85);
 }
 
+.tile-special-badge.special-block {
+  background: rgba(14, 116, 144, 0.85);
+}
+
 .tile.jelly::after {
   content: "";
   position: absolute;

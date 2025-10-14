@@ -15,7 +15,7 @@ export interface Position {
   col: number;
 }
 
-export type SpecialType = "line-row" | "line-col" | "bomb";
+export type SpecialType = "line-row" | "line-col" | "bomb" | "block";
 
 export interface Tile {
   id: number;
@@ -61,7 +61,7 @@ export interface SwapFrame {
   type: FrameType;
 }
 
-type MatchOrientation = "horizontal" | "vertical" | "mixed";
+type MatchOrientation = "horizontal" | "vertical" | "mixed" | "square";
 
 interface MatchGroup {
   positions: Position[];
@@ -167,7 +167,7 @@ function areAdjacent(a: Position, b: Position): boolean {
 
 function findMatches(board: Board): MatchGroup[] {
   const size = board.length;
-  const rawMatches: { positions: Position[]; orientation: "horizontal" | "vertical" }[] = [];
+  const rawMatches: { positions: Position[]; orientation: "horizontal" | "vertical" | "square" }[] = [];
 
   // Horizontal matches
   for (let row = 0; row < size; row++) {
@@ -233,6 +233,37 @@ function findMatches(board: Board): MatchGroup[] {
     }
   }
 
+  // Square (2x2) matches
+  for (let row = 0; row < size - 1; row++) {
+    for (let col = 0; col < size - 1; col++) {
+      const topLeft = board[row][col];
+      if (!topLeft) {
+        continue;
+      }
+      const topRight = board[row][col + 1];
+      const bottomLeft = board[row + 1][col];
+      const bottomRight = board[row + 1][col + 1];
+      if (
+        topRight &&
+        bottomLeft &&
+        bottomRight &&
+        topLeft.kind === topRight.kind &&
+        topLeft.kind === bottomLeft.kind &&
+        topLeft.kind === bottomRight.kind
+      ) {
+        rawMatches.push({
+          positions: [
+            { row, col },
+            { row, col: col + 1 },
+            { row: row + 1, col },
+            { row: row + 1, col: col + 1 }
+          ],
+          orientation: "square"
+        });
+      }
+    }
+  }
+
   if (rawMatches.length === 0) {
     return [];
   }
@@ -281,8 +312,8 @@ function findMatches(board: Board): MatchGroup[] {
       orientation = "mixed";
     } else {
       const first = orientations.values().next().value;
-      if (first === "vertical") {
-        orientation = "vertical";
+      if (first) {
+        orientation = first as MatchOrientation;
       }
     }
     groups.push({ positions, orientation });
@@ -365,7 +396,9 @@ function determineSpecialCreation(
   }
 
   let special: SpecialType;
-  if (length >= 5 || group.orientation === "mixed") {
+  if (group.orientation === "square") {
+    special = "block";
+  } else if (length >= 5 || group.orientation === "mixed") {
     special = "bomb";
   } else if (group.orientation === "horizontal") {
     special = "line-row";
@@ -424,6 +457,21 @@ function applySpecialEffect(
     for (let row = 0; row < height; row++) {
       const pos = { row, col: origin.col };
       accumulator.set(positionKey(pos), pos);
+    }
+    return;
+  }
+
+  if (special === "block") {
+    for (let dr = -2; dr <= 2; dr++) {
+      for (let dc = -2; dc <= 2; dc++) {
+        const row = origin.row + dr;
+        const col = origin.col + dc;
+        if (row < 0 || row >= height || col < 0 || col >= width) {
+          continue;
+        }
+        const pos = { row, col };
+        accumulator.set(positionKey(pos), pos);
+      }
     }
     return;
   }
@@ -513,7 +561,10 @@ function triggerSpecialCombo(board: Board, a: Position, b: Position): SpecialCom
     const firstSpecial = board[first.position.row]?.[first.position.col]?.special;
     const secondSpecial = board[second.position.row]?.[second.position.col]?.special;
 
-    if (firstSpecial === "bomb" && secondSpecial === "bomb") {
+    if (
+      (firstSpecial === "bomb" && secondSpecial === "bomb") ||
+      (firstSpecial === "block" && secondSpecial === "block")
+    ) {
       addEntireBoard();
     } else {
       for (const entry of specials) {
@@ -522,11 +573,18 @@ function triggerSpecialCombo(board: Board, a: Position, b: Position): SpecialCom
         applySpecialEffect(board, entry.position, entry.special, accumulator);
       }
 
+      const enhance: SpecialType[] = [];
       if (firstSpecial === "bomb" || secondSpecial === "bomb") {
-        // enhance bomb combo by also clearing 3x3 around both after initial effect
-        for (const entry of specials) {
+        enhance.push("bomb");
+      }
+      if (firstSpecial === "block" || secondSpecial === "block") {
+        enhance.push("block");
+      }
+
+      for (const entry of specials) {
+        for (const type of enhance) {
           if (board[entry.position.row]?.[entry.position.col]) {
-            applySpecialEffect(board, entry.position, "bomb", accumulator);
+            applySpecialEffect(board, entry.position, type, accumulator);
           }
         }
       }

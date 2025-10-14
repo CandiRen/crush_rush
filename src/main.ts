@@ -97,7 +97,8 @@ const TILE_THEME: Record<TileKind, TileTheme> = {
 const SPECIAL_ICON: Record<SpecialType, string> = {
   "line-row": "➡️",
   "line-col": "⬇️",
-  bomb: "💣"
+  bomb: "💣",
+  block: "🧊"
 };
 
 const MISSION_STORAGE_KEY = "crush-rush-missions";
@@ -694,6 +695,8 @@ function describeSpecial(type: SpecialType): string {
       return "Garis Vertikal";
     case "bomb":
       return "Bom 3x3";
+    case "block":
+      return "Ledakan 5x5";
     default:
       return "Special";
   }
