@@ -126,6 +126,7 @@ const restartButton = document.createElement("button");
 const tutorialOverlay = document.createElement("div");
 const nextButton = document.createElement("button");
 const retryButton = document.createElement("button");
+const playArea = document.createElement("div");
 const missionPanel = document.createElement("div");
 const missionHeader = document.createElement("div");
 const missionList = document.createElement("div");
@@ -175,11 +176,13 @@ nextButton.className = "primary";
 nextButton.textContent = "Level Berikutnya";
 retryButton.className = "ghost";
 retryButton.textContent = "Ulangi Level";
+playArea.className = "play-area";
 missionPanel.className = "mission-panel";
 missionHeader.className = "mission-header";
-missionHeader.textContent = "Misi";
+missionHeader.textContent = "🗒️ Misi";
 missionList.className = "mission-list";
 missionPanel.append(missionHeader, missionList);
+playArea.append(boardElement, missionPanel);
 
 tutorialOverlay.addEventListener("click", () => {
   tutorialActive = false;
@@ -224,7 +227,7 @@ retryButton.addEventListener("click", () => {
 });
 
 bottomBar.append(restartButton);
-shell.append(hud, boardElement, infoBanner, stateBanner, bottomBar, tutorialOverlay, missionPanel);
+shell.append(hud, playArea, infoBanner, stateBanner, bottomBar, tutorialOverlay);
 app.append(shell);
 
 window.crushRush = {
@@ -786,6 +789,14 @@ function buildMissionItem(mission: MissionDefinition, progress: MissionProgress)
   desc.className = "mission-desc";
   desc.textContent = mission.description;
 
+  const progressTrack = document.createElement("div");
+  progressTrack.className = "mission-progress";
+  const progressFill = document.createElement("div");
+  progressFill.className = "mission-progress-fill";
+  const percent = mission.target === 0 ? 1 : Math.min(1, progress.progress / mission.target);
+  progressFill.style.width = `${percent * 100}%`;
+  progressTrack.append(progressFill);
+
   const footer = document.createElement("div");
   footer.className = "mission-footer";
   const progressLabel = document.createElement("span");
@@ -804,7 +815,7 @@ function buildMissionItem(mission: MissionDefinition, progress: MissionProgress)
     rewardLabel.textContent = `Hadiah: ${mission.reward} ✅`;
   }
 
-  item.append(header, desc, footer);
+  item.append(header, desc, progressTrack, footer);
 
   if (progress.completed && !progress.claimed) {
     const claimButton = document.createElement("button");

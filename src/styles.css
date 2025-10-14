@@ -1,29 +1,40 @@
 :root {
   color-scheme: light dark;
   font-family: 'Segoe UI', sans-serif;
-  background: radial-gradient(circle at top, #f5f7ff, #dde4ff 40%, #a8b6ff);
   color: #0f172a;
 }
 
 body {
   margin: 0;
+  background: radial-gradient(circle at top, #1e3a8a, #0f172a 55%);
 }
 
 #app {
-  display: grid;
-  place-items: center;
   min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
 }
 
 .game-shell {
-  width: 420px;
-  padding: 16px;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.8);
-  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
+  width: min(960px, 100%);
+  padding: 28px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 40px 80px rgba(15, 23, 42, 0.35);
   display: grid;
-  gap: 12px;
+  gap: 18px;
   position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.play-area {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 240px);
+  gap: 24px;
+  align-items: start;
 }
 
 .board {
@@ -33,12 +44,13 @@ body {
   grid-template-rows: repeat(9, 1fr);
   width: 100%;
   aspect-ratio: 1;
-  background: linear-gradient(135deg, #4b6cb7, #182848);
-  border-radius: 18px;
+  background: linear-gradient(160deg, #3b82f6, #1d4ed8);
+  border-radius: 24px;
   overflow: hidden;
-  padding: 8px;
+  padding: 12px;
   box-sizing: border-box;
-  gap: 4px;
+  gap: 6px;
+  box-shadow: inset 0 12px 30px rgba(255, 255, 255, 0.1), inset 0 -12px 24px rgba(15, 23, 42, 0.45);
 }
 
 .tile {
@@ -92,6 +104,10 @@ body {
 
 .tile.special[data-special="bomb"] {
   border: 2px solid rgba(244, 114, 182, 0.85);
+}
+
+.tile.special[data-special="block"] {
+  border: 2px solid rgba(14, 165, 233, 0.85);
 }
 
 .tile-special-badge {
@@ -225,55 +241,64 @@ body {
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
   font-size: 14px;
   letter-spacing: 0.5px;
+  padding: 16px 20px;
+  border-radius: 20px;
+  background: rgba(15, 23, 42, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 .hud-item {
-  flex: 1 1 45%;
-  min-width: 120px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: rgba(148, 163, 184, 0.18);
+  flex: 1 1 140px;
+  min-width: 140px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.12);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .hud-item span {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 1px;
-  color: #475569;
+  color: rgba(226, 232, 240, 0.75);
 }
 
 .hud-item strong {
-  font-size: 16px;
-  color: #0f172a;
+  font-size: 18px;
+  color: #f8fafc;
 }
 
 button.primary {
-  padding: 8px 16px;
+  padding: 9px 18px;
   border-radius: 999px;
   border: none;
-  background: linear-gradient(135deg, #60a5fa, #2563eb);
+  background: linear-gradient(135deg, #f97316, #ec4899);
   color: white;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 120ms ease;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  box-shadow: 0 10px 20px rgba(236, 72, 153, 0.35);
 }
 
 button.primary:hover {
-  transform: scale(1.02);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(236, 72, 153, 0.45);
 }
 
 .status-banner {
   display: grid;
   gap: 4px;
-  padding: 10px 12px;
-  border-radius: 16px;
-  background: rgba(148, 163, 184, 0.16);
+  padding: 12px 16px;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   text-align: center;
 }
 
@@ -284,7 +309,7 @@ button.primary:hover {
 .state-message {
   font-weight: 700;
   font-size: 16px;
-  color: #0f172a;
+  color: #f8fafc;
 }
 
 .state-stars {
@@ -295,7 +320,7 @@ button.primary:hover {
 
 .state-detail {
   font-size: 13px;
-  color: #475569;
+  color: rgba(226, 232, 240, 0.78);
 }
 
 .state-actions {
@@ -307,9 +332,9 @@ button.primary:hover {
 button.ghost {
   padding: 8px 16px;
   border-radius: 999px;
-  border: 1px solid rgba(59, 130, 246, 0.45);
-  background: transparent;
-  color: #2563eb;
+  border: 1px solid rgba(96, 165, 250, 0.5);
+  background: rgba(96, 165, 250, 0.12);
+  color: #bfdbfe;
   font-weight: 600;
   cursor: pointer;
   transition: transform 120ms ease, background 120ms ease;
@@ -317,7 +342,7 @@ button.ghost {
 
 button.ghost:hover {
   transform: scale(1.02);
-  background: rgba(59, 130, 246, 0.1);
+  background: rgba(96, 165, 250, 0.22);
 }
 
 .tutorial-overlay {
@@ -341,16 +366,15 @@ button.ghost:hover {
 }
 
 .mission-panel {
-  position: absolute;
-  top: 12px;
-  right: -220px;
-  width: 200px;
-  padding: 12px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.85);
-  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+  position: relative;
+  width: 100%;
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(15, 23, 42, 0.3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   display: grid;
   gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .mission-header {
@@ -358,7 +382,7 @@ button.ghost:hover {
   font-size: 16px;
   text-transform: uppercase;
   letter-spacing: 1px;
-  color: #1e293b;
+  color: #f8fafc;
 }
 
 .mission-list {
@@ -372,46 +396,60 @@ button.ghost:hover {
 .mission {
   padding: 8px 10px;
   border-radius: 12px;
-  background: rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.08);
   display: grid;
   gap: 4px;
   border: 1px solid transparent;
 }
 
 .mission.daily {
-  border-color: rgba(59, 130, 246, 0.3);
+  border-color: rgba(96, 165, 250, 0.35);
 }
 
 .mission.weekly {
-  border-color: rgba(16, 185, 129, 0.3);
+  border-color: rgba(52, 211, 153, 0.35);
 }
 
 .mission.completed {
-  background: rgba(74, 222, 128, 0.2);
-  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.2);
+  border-color: rgba(34, 197, 94, 0.5);
 }
 
 .mission.claimed {
-  background: rgba(34, 197, 94, 0.15);
-  border-color: rgba(21, 128, 61, 0.45);
+  background: rgba(12, 74, 110, 0.28);
+  border-color: rgba(14, 165, 233, 0.5);
 }
 
 .mission-title {
   font-weight: 600;
   font-size: 14px;
-  color: #0f172a;
+  color: #f8fafc;
 }
 
 .mission-desc {
   font-size: 12px;
-  color: #475569;
+  color: rgba(226, 232, 240, 0.86);
 }
 
 .mission-footer {
   display: flex;
   justify-content: space-between;
   font-size: 12px;
-  color: #1e293b;
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.mission-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.4);
+  overflow: hidden;
+}
+
+.mission-progress-fill {
+  height: 100%;
+  background: linear-gradient(135deg, #60a5fa, #2563eb);
+  border-radius: inherit;
+  transition: width 220ms ease;
 }
 
 .mission-claim {
@@ -430,4 +468,19 @@ button.ghost:hover {
 
 .mission-claim:hover {
   transform: translateY(-1px);
+}
+
+@media (max-width: 880px) {
+  .game-shell {
+    padding: 20px;
+  }
+
+  .play-area {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .mission-panel {
+    order: -1;
+  }
 }
