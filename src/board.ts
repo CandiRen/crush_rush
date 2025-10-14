@@ -36,6 +36,17 @@ export interface ResolveResult {
 export interface SwapResult extends ResolveResult {
   valid: boolean;
   reason?: "not-adjacent" | "no-match" | "out-of-bounds";
+  frames: SwapFrame[];
+}
+
+export type FrameType = "match" | "cascade" | "final";
+
+export interface SwapFrame {
+  board: Board;
+  removed: Position[];
+  cascadeIndex: number;
+  scoreGain: number;
+  type: FrameType;
 }
 
 const BASE_MATCH_SCORE = 60;
@@ -318,7 +329,8 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
       reason: "out-of-bounds",
       cascades: [],
       totalRemoved: 0,
-      totalScore: 0
+      totalScore: 0,
+      frames: []
     };
   }
 
@@ -328,7 +340,8 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
       reason: "not-adjacent",
       cascades: [],
       totalRemoved: 0,
-      totalScore: 0
+      totalScore: 0,
+      frames: []
     };
   }
 
@@ -341,11 +354,13 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
       reason: "no-match",
       cascades: [],
       totalRemoved: 0,
-      totalScore: 0
+      totalScore: 0,
+      frames: []
     };
   }
 
   const cascades: CascadeDetail[] = [];
+  const frames: SwapFrame[] = [];
   let totalRemoved = 0;
   let totalScore = 0;
   let cascadeIndex = 1;
@@ -354,6 +369,7 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
   let currentMatches = matches;
 
   while (currentMatches.length > 0) {
+    const preClearBoard = cloneBoard(currentBoard);
     const removedPositions = clearMatches(currentBoard, currentMatches);
     totalRemoved += removedPositions.length;
     const scoreGain = Math.round(removedPositions.length * BASE_MATCH_SCORE * cascadeIndex);
@@ -361,8 +377,24 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
 
     cascades.push({ removed: removedPositions, scoreGain });
 
+    frames.push({
+      board: preClearBoard,
+      removed: removedPositions,
+      cascadeIndex,
+      scoreGain,
+      type: "match"
+    });
+
     collapseColumns(currentBoard);
     refillBoard(currentBoard);
+
+    frames.push({
+      board: cloneBoard(currentBoard),
+      removed: [],
+      cascadeIndex,
+      scoreGain,
+      type: "cascade"
+    });
 
     currentMatches = findMatches(currentBoard);
     cascadeIndex++;
@@ -380,10 +412,19 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
     }
   }
 
+  frames.push({
+    board: cloneBoard(board),
+    removed: [],
+    cascadeIndex: cascadeIndex - 1,
+    scoreGain: 0,
+    type: "final"
+  });
+
   return {
     valid: true,
     cascades,
     totalRemoved,
-    totalScore
+    totalScore,
+    frames
   };
 }

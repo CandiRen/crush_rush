@@ -3,6 +3,7 @@ import {
   Board,
   CascadeDetail,
   Position,
+  SwapFrame,
   SwapResult,
   attemptSwap,
   createInitialBoard
@@ -24,6 +25,7 @@ export interface SwapFeedback {
   movesLeft: number;
   status: GameStatus;
   totalScore: number;
+  frames: SwapFrame[];
 }
 
 const DEFAULT_CONFIG: GameConfig = {
@@ -87,7 +89,8 @@ export class Game {
         scoreGain: 0,
         movesLeft: this.movesLeft,
         status: this.getStatus(),
-        totalScore: this.score
+        totalScore: this.score,
+        frames: []
       };
     }
 
@@ -101,7 +104,8 @@ export class Game {
         scoreGain: 0,
         movesLeft: this.movesLeft,
         status: this.getStatus(),
-        totalScore: this.score
+        totalScore: this.score,
+        frames: []
       };
     }
 
@@ -116,7 +120,8 @@ export class Game {
       scoreGain: swapResult.totalScore,
       movesLeft: this.movesLeft,
       status: currentStatus,
-      totalScore: this.score
+      totalScore: this.score,
+      frames: swapResult.frames
     };
   }
 }

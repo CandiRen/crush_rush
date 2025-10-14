@@ -1,4 +1,4 @@
-import { Board, Position, Tile, TileKind } from "./board";
+import { Board, Position, Tile, TileKind, SwapFrame } from "./board";
 import { Game, GameStatus } from "./game";
 
 interface TileTheme {
@@ -6,6 +6,26 @@ interface TileTheme {
   background: string;
   text: string;
 }
+
+interface PlaybackState {
+  frames: SwapFrame[];
+  index: number;
+  timer: number | null;
+  finalMessage: string;
+}
+
+interface RenderOptions {
+  highlight?: Position[];
+  highlightType?: "match" | "cascade";
+  disableInput?: boolean;
+  selected?: Position | null;
+}
+
+const FRAME_DURATION: Record<SwapFrame["type"], number> = {
+  match: 320,
+  cascade: 260,
+  final: 160
+};
 
 const TILE_THEME: Record<TileKind, TileTheme> = {
   berry: {
@@ -54,17 +74,22 @@ const infoBanner = document.createElement("div");
 const stateBanner = document.createElement("div");
 const bottomBar = document.createElement("div");
 const restartButton = document.createElement("button");
+const tutorialOverlay = document.createElement("div");
 
 declare global {
   interface Window {
     crushRush?: {
       debugBoard(): Board;
+      skipTutorial(): void;
     };
   }
 }
 
 let selected: Position | null = null;
 let infoMessage = "Cocokkan tiga permen atau lebih!";
+let playback: PlaybackState | null = null;
+let isAnimating = false;
+let tutorialActive = true;
 
 shell.className = "game-shell";
 hud.className = "hud";
@@ -74,8 +99,23 @@ stateBanner.className = "status-banner hidden";
 bottomBar.className = "hud";
 restartButton.className = "primary";
 restartButton.textContent = "Mulai Ulang";
+tutorialOverlay.className = "tutorial-overlay";
+tutorialOverlay.innerHTML = `
+  <div>
+    <h3>Selamat datang di Crush Rush!</h3>
+    <p>Pilih dua permen bertetangga untuk menukarnya. Bentuk garis tiga atau lebih untuk mendapatkan skor.</p>
+    <p><strong>Klik di mana saja</strong> untuk memulai level pertama.</p>
+  </div>
+`;
+
+tutorialOverlay.addEventListener("click", () => {
+  tutorialActive = false;
+  infoMessage = "Pilih dua permen bertetangga untuk ditukar.";
+  render();
+});
 
 restartButton.addEventListener("click", () => {
+  cancelPlayback();
   game.reset();
   selected = null;
   infoMessage = "Level dimulai ulang.";
@@ -83,20 +123,37 @@ restartButton.addEventListener("click", () => {
 });
 
 bottomBar.append(restartButton);
-shell.append(hud, boardElement, infoBanner, stateBanner, bottomBar);
+shell.append(hud, boardElement, infoBanner, stateBanner, bottomBar, tutorialOverlay);
 app.append(shell);
 
 window.crushRush = {
   debugBoard() {
     return structuredClone(game.getBoard());
+  },
+  skipTutorial() {
+    tutorialActive = false;
+    render();
   }
 };
 
 function render(): void {
-  renderHud();
-  renderBoard(game.getBoard(), game.getStatus());
-  infoBanner.textContent = infoMessage;
   const status = game.getStatus();
+  const activeFrame = playback ? playback.frames[playback.index] : null;
+  const boardSnapshot = activeFrame ? activeFrame.board : game.getBoard();
+  const highlight = activeFrame?.removed ?? [];
+  const highlightType = activeFrame?.type === "match" ? "match" : activeFrame?.type === "cascade" ? "cascade" : undefined;
+  const disableInput = isAnimating || tutorialActive;
+
+  renderHud();
+  renderBoard(boardSnapshot, status, {
+    highlight,
+    highlightType,
+    disableInput,
+    selected
+  });
+
+  infoBanner.textContent = infoMessage;
+
   if (status === "won") {
     stateBanner.textContent = "Level selesai! Target skor tercapai.";
     stateBanner.classList.remove("hidden");
@@ -106,6 +163,12 @@ function render(): void {
   } else {
     stateBanner.classList.add("hidden");
     stateBanner.textContent = "";
+  }
+
+  if (tutorialActive) {
+    tutorialOverlay.classList.remove("hidden");
+  } else {
+    tutorialOverlay.classList.add("hidden");
   }
 }
 
@@ -123,10 +186,13 @@ function renderHud(): void {
   hud.append(score, moves, target);
 }
 
-function renderBoard(board: Board, status: GameStatus): void {
+function renderBoard(board: Board, status: GameStatus, options: RenderOptions = {}): void {
   boardElement.innerHTML = "";
   boardElement.style.gridTemplateColumns = `repeat(${board.length}, 1fr)`;
   boardElement.style.gridTemplateRows = `repeat(${board.length}, 1fr)`;
+
+  const highlightKeys = new Set(options.highlight?.map(positionKey));
+  const disableInput = options.disableInput || status !== "playing";
 
   board.forEach((row, rowIndex) => {
     row.forEach((tile, colIndex) => {
@@ -137,13 +203,21 @@ function renderBoard(board: Board, status: GameStatus): void {
         tileElement.classList.add("hidden");
       } else {
         decorateTile(tileElement, tile);
+        if (options.highlightType === "cascade") {
+          tileElement.classList.add("cascade");
+        }
       }
 
-      if (selected && selected.row === rowIndex && selected.col === colIndex) {
+      const key = positionKey({ row: rowIndex, col: colIndex });
+      if (highlightKeys.has(key)) {
+        tileElement.classList.add("matched");
+      }
+
+      if (options.selected && options.selected.row === rowIndex && options.selected.col === colIndex) {
         tileElement.classList.add("selected");
       }
 
-      if (status !== "playing") {
+      if (disableInput) {
         tileElement.classList.add("disabled");
       }
 
@@ -164,6 +238,18 @@ function decorateTile(container: HTMLDivElement, tile: Tile): void {
 }
 
 function onTileClick(position: Position): void {
+  if (tutorialActive) {
+    infoMessage = "Tutup layar tutorial untuk mulai bermain.";
+    render();
+    return;
+  }
+
+  if (isAnimating) {
+    infoMessage = "Tunggu animasi selesai.";
+    render();
+    return;
+  }
+
   if (game.getStatus() !== "playing") {
     infoMessage = "Level sudah selesai. Tekan Mulai Ulang.";
     render();
@@ -201,16 +287,73 @@ function onTileClick(position: Position): void {
     return;
   }
 
-  selected = null;
+  const removed = result.cascades[0]?.removed.length ?? 0;
+  const finalMessage = result.cascades.length > 1
+    ? `Kombo ${result.cascades.length} cascade! +${result.scoreGain} skor.`
+    : `Match ${removed} permen. +${result.scoreGain} skor.`;
 
-  if (result.cascades.length > 1) {
-    infoMessage = `Kombo ${result.cascades.length} cascade! +${result.scoreGain} skor.`;
-  } else {
-    const removed = result.cascades[0]?.removed.length ?? 0;
-    infoMessage = `Match ${removed} permen. +${result.scoreGain} skor.`;
+  selected = null;
+  startPlayback(result.frames, finalMessage);
+}
+
+function startPlayback(frames: SwapFrame[], finalMessage: string): void {
+  if (frames.length === 0) {
+    infoMessage = finalMessage;
+    render();
+    return;
+  }
+
+  cancelPlayback();
+
+  playback = {
+    frames,
+    index: 0,
+    timer: null,
+    finalMessage
+  };
+
+  isAnimating = true;
+  infoMessage = "Permen meledak...";
+  stepPlayback();
+}
+
+function stepPlayback(): void {
+  if (!playback) {
+    return;
   }
 
   render();
+  const currentFrame = playback.frames[playback.index];
+  const duration = FRAME_DURATION[currentFrame.type] ?? 240;
+
+  if (playback.index >= playback.frames.length - 1) {
+    const message = playback.finalMessage;
+    isAnimating = false;
+    playback = null;
+    infoMessage = message;
+    render();
+    return;
+  }
+
+  playback.timer = window.setTimeout(() => {
+    if (!playback) {
+      return;
+    }
+    playback.index += 1;
+    stepPlayback();
+  }, duration);
+}
+
+function cancelPlayback(): void {
+  if (playback?.timer != null) {
+    window.clearTimeout(playback.timer);
+  }
+  playback = null;
+  isAnimating = false;
+}
+
+function positionKey(position: Position): string {
+  return `${position.row},${position.col}`;
 }
 
 render();

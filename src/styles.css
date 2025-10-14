@@ -23,6 +23,7 @@ body {
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
   display: grid;
   gap: 12px;
+  position: relative;
 }
 
 .board {
@@ -68,6 +69,42 @@ body {
   opacity: 0.7;
 }
 
+.tile.matched {
+  animation: pop 220ms ease-in forwards;
+  box-shadow: 0 0 0 3px rgba(253, 224, 71, 0.6);
+}
+
+.tile.cascade {
+  animation: settle 240ms ease-out;
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  80% {
+    transform: scale(1.2);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+}
+
+@keyframes settle {
+  0% {
+    transform: translateY(-12px);
+  }
+  55% {
+    transform: translateY(6px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
 .hud {
   display: flex;
   justify-content: space-between;
@@ -98,5 +135,25 @@ button.primary:hover {
 }
 
 .hidden {
+  display: none;
+}
+
+.tutorial-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.45);
+  color: #f8fafc;
+  text-align: center;
+  padding: 24px;
+  border-radius: 24px;
+  font-size: 16px;
+  line-height: 1.5;
+  z-index: 10;
+  cursor: pointer;
+}
+
+.tutorial-overlay.hidden {
   display: none;
 }
