@@ -1,6 +1,13 @@
-import { Board, Position, Tile, TileKind, SwapFrame } from "./board";
+import {
+  Board,
+  Position,
+  Tile,
+  TileKind,
+  SwapFrame,
+  SpecialType
+} from "./board";
 import { Game, GameStatus } from "./game";
-import { LEVELS, LevelDefinition } from "./levels";
+import { LEVELS } from "./levels";
 
 interface TileTheme {
   label: string;
@@ -17,7 +24,7 @@ interface PlaybackState {
 
 interface RenderOptions {
   highlight?: Position[];
-  highlightType?: "match" | "cascade";
+  highlightType?: "match" | "cascade" | "special";
   disableInput?: boolean;
   selected?: Position | null;
 }
@@ -25,6 +32,7 @@ interface RenderOptions {
 const FRAME_DURATION: Record<SwapFrame["type"], number> = {
   match: 320,
   cascade: 260,
+  special: 360,
   final: 160
 };
 
@@ -59,6 +67,12 @@ const TILE_THEME: Record<TileKind, TileTheme> = {
     background: "linear-gradient(135deg, #fcb69f, #ffecd2)",
     text: "#0f172a"
   }
+};
+
+const SPECIAL_SUFFIX: Record<SpecialType, string> = {
+  "line-row": "-",
+  "line-col": "|",
+  bomb: "B"
 };
 
 let currentLevelIndex = 0;
@@ -211,7 +225,14 @@ function render(): void {
   const activeFrame = playback ? playback.frames[playback.index] : null;
   const boardSnapshot = activeFrame ? activeFrame.board : game.getBoard();
   const highlight = activeFrame?.removed ?? [];
-  const highlightType = activeFrame?.type === "match" ? "match" : activeFrame?.type === "cascade" ? "cascade" : undefined;
+  let highlightType: RenderOptions["highlightType"] | undefined;
+  if (activeFrame?.type === "match") {
+    highlightType = "match";
+  } else if (activeFrame?.type === "cascade") {
+    highlightType = "cascade";
+  } else if (activeFrame?.type === "special") {
+    highlightType = "special";
+  }
   const disableInput = isAnimating || tutorialActive;
 
   renderHud();
@@ -280,6 +301,9 @@ function renderBoard(board: Board, status: GameStatus, options: RenderOptions = 
       const key = positionKey({ row: rowIndex, col: colIndex });
       if (highlightKeys.has(key)) {
         tileElement.classList.add("matched");
+        if (options.highlightType === "special") {
+          tileElement.classList.add("combo");
+        }
       }
 
       if (options.selected && options.selected.row === rowIndex && options.selected.col === colIndex) {
@@ -301,9 +325,21 @@ function renderBoard(board: Board, status: GameStatus, options: RenderOptions = 
 
 function decorateTile(container: HTMLDivElement, tile: Tile): void {
   const theme = TILE_THEME[tile.kind];
-  container.textContent = theme.label;
+  const suffix = tile.special ? SPECIAL_SUFFIX[tile.special] : "";
+  container.textContent = `${theme.label}${suffix}`;
   container.style.background = theme.background;
   container.style.color = theme.text;
+  container.dataset.kind = tile.kind;
+
+  if (tile.special) {
+    container.classList.add("special");
+    container.dataset.special = tile.special;
+    container.title = `${describeSpecial(tile.special)} (${theme.label})`;
+  } else {
+    container.classList.remove("special");
+    container.removeAttribute("data-special");
+    container.title = theme.label;
+  }
 }
 
 function onTileClick(position: Position): void {
@@ -356,10 +392,20 @@ function onTileClick(position: Position): void {
     return;
   }
 
-  const removed = result.cascades[0]?.removed.length ?? 0;
-  const finalMessage = result.cascades.length > 1
+  const firstCascade = result.cascades[0];
+  const removalCount = firstCascade
+    ? firstCascade.removed.length + firstCascade.createdSpecials.length
+    : 0;
+
+  let finalMessage = result.cascades.length > 1
     ? `Kombo ${result.cascades.length} cascade! +${result.scoreGain} skor.`
-    : `Match ${removed} permen. +${result.scoreGain} skor.`;
+    : `Match ${removalCount} permen. +${result.scoreGain} skor.`;
+
+  const specialCreated = result.cascades.flatMap((cascade) => cascade.createdSpecials);
+  if (specialCreated.length > 0) {
+    const labels = Array.from(new Set(specialCreated.map((item) => describeSpecial(item.special))));
+    finalMessage += ` | Special baru: ${formatSpecialList(labels)}`;
+  }
 
   selected = null;
   startPlayback(result.frames, finalMessage);
@@ -382,7 +428,7 @@ function startPlayback(frames: SwapFrame[], finalMessage: string): void {
   };
 
   isAnimating = true;
-  infoMessage = "Permen meledak...";
+  infoMessage = frames[0]?.type === "special" ? "Special combo aktif!" : "Permen meledak...";
   stepPlayback();
 }
 
@@ -469,6 +515,30 @@ function hasNextLevel(): boolean {
 
 function positionKey(position: Position): string {
   return `${position.row},${position.col}`;
+}
+
+function describeSpecial(type: SpecialType): string {
+  switch (type) {
+    case "line-row":
+      return "Garis Horizontal";
+    case "line-col":
+      return "Garis Vertikal";
+    case "bomb":
+      return "Bom 3x3";
+    default:
+      return "Special";
+  }
+}
+
+function formatSpecialList(labels: string[]): string {
+  if (labels.length === 0) {
+    return "";
+  }
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  const last = labels.pop();
+  return `${labels.join(", ")} dan ${last}`;
 }
 
 render();

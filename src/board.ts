@@ -15,17 +15,27 @@ export interface Position {
   col: number;
 }
 
+export type SpecialType = "line-row" | "line-col" | "bomb";
+
 export interface Tile {
   id: number;
   kind: TileKind;
+  special?: SpecialType;
 }
 
 export type Board = (Tile | null)[][];
 export type TileLayout = TileKind[][];
 
+export interface SpecialCreation {
+  position: Position;
+  special: SpecialType;
+  kind: TileKind;
+}
+
 export interface CascadeDetail {
   removed: Position[];
   scoreGain: number;
+  createdSpecials: SpecialCreation[];
 }
 
 export interface ResolveResult {
@@ -40,25 +50,34 @@ export interface SwapResult extends ResolveResult {
   frames: SwapFrame[];
 }
 
-export type FrameType = "match" | "cascade" | "final";
+export type FrameType = "match" | "cascade" | "special" | "final";
 
 export interface SwapFrame {
   board: Board;
   removed: Position[];
   cascadeIndex: number;
   scoreGain: number;
+  createdSpecials: SpecialCreation[];
   type: FrameType;
 }
 
+type MatchOrientation = "horizontal" | "vertical" | "mixed";
+
+interface MatchGroup {
+  positions: Position[];
+  orientation: MatchOrientation;
+}
+
 const BASE_MATCH_SCORE = 60;
+const SPECIAL_COMBO_MULTIPLIER = 1.5;
 const MAX_GENERATION_ATTEMPTS = 100;
 
 let nextTileId = 1;
 
 const rng = () => Math.random();
 
-function createTile(kind: TileKind): Tile {
-  return { id: nextTileId++, kind };
+function createTile(kind: TileKind, special?: SpecialType): Tile {
+  return { id: nextTileId++, kind, special };
 }
 
 function randomKind(): TileKind {
@@ -146,9 +165,9 @@ function areAdjacent(a: Position, b: Position): boolean {
   return (rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1);
 }
 
-function findMatches(board: Board): Position[][] {
-  const matches: Position[][] = [];
+function findMatches(board: Board): MatchGroup[] {
   const size = board.length;
+  const rawMatches: { positions: Position[]; orientation: "horizontal" | "vertical" }[] = [];
 
   // Horizontal matches
   for (let row = 0; row < size; row++) {
@@ -157,7 +176,7 @@ function findMatches(board: Board): Position[][] {
       const tile = board[row][col];
       if (!tile) {
         if (run.length >= 3) {
-          matches.push(run);
+          rawMatches.push({ positions: run, orientation: "horizontal" });
         }
         run = [];
         continue;
@@ -171,14 +190,14 @@ function findMatches(board: Board): Position[][] {
           run.push({ row, col });
         } else {
           if (run.length >= 3) {
-            matches.push(run);
+            rawMatches.push({ positions: run, orientation: "horizontal" });
           }
           run = [{ row, col }];
         }
       }
     }
     if (run.length >= 3) {
-      matches.push(run);
+      rawMatches.push({ positions: run, orientation: "horizontal" });
     }
   }
 
@@ -189,7 +208,7 @@ function findMatches(board: Board): Position[][] {
       const tile = board[row][col];
       if (!tile) {
         if (run.length >= 3) {
-          matches.push(run);
+          rawMatches.push({ positions: run, orientation: "vertical" });
         }
         run = [];
         continue;
@@ -203,36 +222,343 @@ function findMatches(board: Board): Position[][] {
           run.push({ row, col });
         } else {
           if (run.length >= 3) {
-            matches.push(run);
+            rawMatches.push({ positions: run, orientation: "vertical" });
           }
           run = [{ row, col }];
         }
       }
     }
     if (run.length >= 3) {
-      matches.push(run);
+      rawMatches.push({ positions: run, orientation: "vertical" });
     }
   }
 
-  return matches;
+  if (rawMatches.length === 0) {
+    return [];
+  }
+
+  const groups: MatchGroup[] = [];
+  const visited = new Set<number>();
+
+  for (let i = 0; i < rawMatches.length; i++) {
+    if (visited.has(i)) {
+      continue;
+    }
+
+    const queue = [i];
+    const positionsMap = new Map<string, Position>();
+    const orientations = new Set<MatchOrientation>();
+
+    while (queue.length > 0) {
+      const index = queue.pop()!;
+      if (visited.has(index)) {
+        continue;
+      }
+      visited.add(index);
+
+      const match = rawMatches[index];
+      orientations.add(match.orientation);
+      for (const pos of match.positions) {
+        const key = positionKey(pos);
+        if (!positionsMap.has(key)) {
+          positionsMap.set(key, pos);
+        }
+      }
+
+      for (let j = 0; j < rawMatches.length; j++) {
+        if (visited.has(j)) {
+          continue;
+        }
+        if (matchesOverlap(rawMatches[index].positions, rawMatches[j].positions)) {
+          queue.push(j);
+        }
+      }
+    }
+
+    const positions = Array.from(positionsMap.values());
+    let orientation: MatchOrientation = "horizontal";
+    if (orientations.size > 1) {
+      orientation = "mixed";
+    } else {
+      const first = orientations.values().next().value;
+      if (first === "vertical") {
+        orientation = "vertical";
+      }
+    }
+    groups.push({ positions, orientation });
+  }
+
+  return groups;
 }
 
-function clearMatches(board: Board, matches: Position[][]): Position[] {
-  const unique = new Map<string, Position>();
+function matchesOverlap(a: Position[], b: Position[]): boolean {
+  const set = new Set(a.map(positionKey));
+  return b.some((pos) => set.has(positionKey(pos)));
+}
+
+function positionKey(position: Position): string {
+  return `${position.row},${position.col}`;
+}
+
+function clearMatches(
+  board: Board,
+  matches: MatchGroup[],
+  swapContext?: { primary: Position; secondary: Position }
+): { removed: Position[]; createdSpecials: SpecialCreation[] } {
+  const uniqueRemoval = new Map<string, Position>();
+  const createdSpecials: SpecialCreation[] = [];
+
+  const swapPriority = new Set<string>(
+    swapContext ? [positionKey(swapContext.primary), positionKey(swapContext.secondary)] : []
+  );
+
+  const matchSpecialPlans: { position: Position; special: SpecialType; kind: TileKind }[] = [];
+
   for (const group of matches) {
-    for (const pos of group) {
-      const key = `${pos.row},${pos.col}`;
-      if (!unique.has(key)) {
-        unique.set(key, pos);
+    if (group.positions.length === 0) {
+      continue;
+    }
+
+    for (const pos of group.positions) {
+      uniqueRemoval.set(positionKey(pos), pos);
+      const tile = board[pos.row][pos.col];
+      if (tile?.special) {
+        applySpecialEffect(board, pos, tile.special, uniqueRemoval);
+      }
+    }
+
+    const specialPlan = determineSpecialCreation(board, group, swapPriority);
+    if (specialPlan) {
+      matchSpecialPlans.push(specialPlan);
+    }
+  }
+
+  expandSpecialChain(board, uniqueRemoval);
+
+  for (const plan of matchSpecialPlans) {
+    uniqueRemoval.delete(positionKey(plan.position));
+  }
+
+  for (const pos of uniqueRemoval.values()) {
+    board[pos.row][pos.col] = null;
+  }
+
+  for (const plan of matchSpecialPlans) {
+    board[plan.position.row][plan.position.col] = createTile(plan.kind, plan.special);
+    createdSpecials.push({ ...plan });
+  }
+
+  return {
+    removed: Array.from(uniqueRemoval.values()),
+    createdSpecials
+  };
+}
+
+function determineSpecialCreation(
+  board: Board,
+  group: MatchGroup,
+  swapPriority: Set<string>
+): SpecialCreation | null {
+  const length = group.positions.length;
+  if (length < 4) {
+    return null;
+  }
+
+  let special: SpecialType;
+  if (length >= 5 || group.orientation === "mixed") {
+    special = "bomb";
+  } else if (group.orientation === "horizontal") {
+    special = "line-row";
+  } else {
+    special = "line-col";
+  }
+
+  const placement = chooseSpecialPlacement(group.positions, swapPriority);
+  if (!placement) {
+    return null;
+  }
+
+  const tile = board[placement.row][placement.col];
+  const fallback = board[group.positions[0].row]?.[group.positions[0].col] ?? null;
+  const kind = tile?.kind ?? fallback?.kind ?? TILE_KINDS[0];
+
+  return {
+    position: placement,
+    special,
+    kind
+  };
+}
+
+function chooseSpecialPlacement(positions: Position[], swapPriority: Set<string>): Position | null {
+  if (positions.length === 0) {
+    return null;
+  }
+
+  for (const pos of positions) {
+    if (swapPriority.has(positionKey(pos))) {
+      return pos;
+    }
+  }
+
+  return positions[Math.floor(positions.length / 2)];
+}
+
+function applySpecialEffect(
+  board: Board,
+  origin: Position,
+  special: SpecialType,
+  accumulator: Map<string, Position>
+): void {
+  const height = board.length;
+  const width = board[0]?.length ?? 0;
+
+  if (special === "line-row") {
+    for (let col = 0; col < width; col++) {
+      const pos = { row: origin.row, col };
+      accumulator.set(positionKey(pos), pos);
+    }
+    return;
+  }
+
+  if (special === "line-col") {
+    for (let row = 0; row < height; row++) {
+      const pos = { row, col: origin.col };
+      accumulator.set(positionKey(pos), pos);
+    }
+    return;
+  }
+
+  // bomb clears surrounding 3x3 area including self
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const row = origin.row + dr;
+      const col = origin.col + dc;
+      if (row < 0 || row >= height || col < 0 || col >= width) {
+        continue;
+      }
+      const pos = { row, col };
+      accumulator.set(positionKey(pos), pos);
+    }
+  }
+}
+
+function expandSpecialChain(board: Board, accumulator: Map<string, Position>): void {
+  const processed = new Set<string>();
+  const queue: Position[] = Array.from(accumulator.values());
+
+  while (queue.length > 0) {
+    const pos = queue.pop()!;
+    const key = positionKey(pos);
+    if (processed.has(key)) {
+      continue;
+    }
+    processed.add(key);
+
+    const tile = board[pos.row]?.[pos.col];
+    if (!tile?.special) {
+      continue;
+    }
+
+    const beforeSize = accumulator.size;
+    applySpecialEffect(board, pos, tile.special, accumulator);
+    if (accumulator.size > beforeSize) {
+      for (const newPos of accumulator.values()) {
+        const newKey = positionKey(newPos);
+        if (!processed.has(newKey)) {
+          queue.push(newPos);
+        }
       }
     }
   }
+}
 
-  for (const { row, col } of unique.values()) {
+interface SpecialComboResult {
+  removed: Position[];
+  before: Board;
+  after: Board;
+}
+
+function triggerSpecialCombo(board: Board, a: Position, b: Position): SpecialComboResult | null {
+  const tileA = board[a.row]?.[a.col];
+  const tileB = board[b.row]?.[b.col];
+
+  const specials: { position: Position; special: SpecialType }[] = [];
+  if (tileA?.special) {
+    specials.push({ position: a, special: tileA.special });
+  }
+  if (tileB?.special) {
+    specials.push({ position: b, special: tileB.special });
+  }
+
+  if (specials.length === 0) {
+    return null;
+  }
+
+  const before = cloneBoard(board);
+  const accumulator = new Map<string, Position>();
+
+  const addEntireBoard = () => {
+    for (let row = 0; row < board.length; row++) {
+      for (let col = 0; col < board[row].length; col++) {
+        if (board[row][col]) {
+          const pos = { row, col };
+          accumulator.set(positionKey(pos), pos);
+        }
+      }
+    }
+  };
+
+  if (specials.length === 2) {
+    const [first, second] = specials;
+    const firstSpecial = board[first.position.row]?.[first.position.col]?.special;
+    const secondSpecial = board[second.position.row]?.[second.position.col]?.special;
+
+    if (firstSpecial === "bomb" && secondSpecial === "bomb") {
+      addEntireBoard();
+    } else {
+      for (const entry of specials) {
+        const posKey = positionKey(entry.position);
+        accumulator.set(posKey, entry.position);
+        applySpecialEffect(board, entry.position, entry.special, accumulator);
+      }
+
+      if (firstSpecial === "bomb" || secondSpecial === "bomb") {
+        // enhance bomb combo by also clearing 3x3 around both after initial effect
+        for (const entry of specials) {
+          if (board[entry.position.row]?.[entry.position.col]) {
+            applySpecialEffect(board, entry.position, "bomb", accumulator);
+          }
+        }
+      }
+    }
+  } else {
+    const only = specials[0];
+    const key = positionKey(only.position);
+    accumulator.set(key, only.position);
+    applySpecialEffect(board, only.position, only.special, accumulator);
+  }
+
+  expandSpecialChain(board, accumulator);
+
+  const removed = Array.from(accumulator.values()).filter((pos) => before[pos.row]?.[pos.col]);
+  if (removed.length === 0) {
+    return null;
+  }
+
+  for (const { row, col } of removed) {
     board[row][col] = null;
   }
 
-  return Array.from(unique.values());
+  collapseColumns(board);
+  refillBoard(board);
+
+  const after = cloneBoard(board);
+
+  return {
+    removed,
+    before,
+    after
+  };
 }
 
 function collapseColumns(board: Board): void {
@@ -363,8 +689,11 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
 
   const workingBoard = cloneBoard(board);
   swapTiles(workingBoard, a, b);
-  const matches = findMatches(workingBoard);
-  if (matches.length === 0) {
+
+  const comboResult = triggerSpecialCombo(workingBoard, a, b);
+  let matches = findMatches(workingBoard);
+
+  if (!comboResult && matches.length === 0) {
     return {
       valid: false,
       reason: "no-match",
@@ -381,23 +710,65 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
   let totalScore = 0;
   let cascadeIndex = 1;
 
+  if (comboResult) {
+    const comboRemovalCount = comboResult.removed.length;
+    const comboScore = Math.round(
+      comboRemovalCount * BASE_MATCH_SCORE * cascadeIndex * SPECIAL_COMBO_MULTIPLIER
+    );
+    totalRemoved += comboRemovalCount;
+    totalScore += comboScore;
+
+    cascades.push({
+      removed: comboResult.removed,
+      scoreGain: comboScore,
+      createdSpecials: []
+    });
+
+    frames.push({
+      board: comboResult.before,
+      removed: comboResult.removed,
+      cascadeIndex,
+      scoreGain: comboScore,
+      createdSpecials: [],
+      type: "special"
+    });
+
+    frames.push({
+      board: comboResult.after,
+      removed: [],
+      cascadeIndex,
+      scoreGain: comboScore,
+      createdSpecials: [],
+      type: "cascade"
+    });
+
+    cascadeIndex++;
+    matches = findMatches(workingBoard);
+  }
+
   let currentBoard = workingBoard;
   let currentMatches = matches;
 
   while (currentMatches.length > 0) {
     const preClearBoard = cloneBoard(currentBoard);
-    const removedPositions = clearMatches(currentBoard, currentMatches);
-    totalRemoved += removedPositions.length;
-    const scoreGain = Math.round(removedPositions.length * BASE_MATCH_SCORE * cascadeIndex);
+    const cleared = clearMatches(currentBoard, currentMatches, { primary: a, secondary: b });
+    const removalCount = cleared.removed.length + cleared.createdSpecials.length;
+    totalRemoved += removalCount;
+    const scoreGain = Math.round(removalCount * BASE_MATCH_SCORE * cascadeIndex);
     totalScore += scoreGain;
 
-    cascades.push({ removed: removedPositions, scoreGain });
+    cascades.push({
+      removed: cleared.removed,
+      scoreGain,
+      createdSpecials: cleared.createdSpecials
+    });
 
     frames.push({
       board: preClearBoard,
-      removed: removedPositions,
+      removed: cleared.removed,
       cascadeIndex,
       scoreGain,
+      createdSpecials: cleared.createdSpecials,
       type: "match"
     });
 
@@ -409,6 +780,7 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
       removed: [],
       cascadeIndex,
       scoreGain,
+      createdSpecials: [],
       type: "cascade"
     });
 
@@ -433,6 +805,7 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
     removed: [],
     cascadeIndex: cascadeIndex - 1,
     scoreGain: 0,
+    createdSpecials: [],
     type: "final"
   });
 

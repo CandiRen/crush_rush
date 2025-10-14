@@ -50,6 +50,7 @@ body {
   transition: transform 120ms ease, box-shadow 120ms ease;
   cursor: pointer;
   user-select: none;
+  box-sizing: border-box;
 }
 
 .tile:hover {
@@ -69,6 +70,24 @@ body {
   opacity: 0.7;
 }
 
+.tile.special {
+  box-shadow: 0 0 0 3px rgba(253, 224, 71, 0.6);
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.tile.special[data-special="line-row"] {
+  border: 2px solid rgba(34, 197, 94, 0.8);
+}
+
+.tile.special[data-special="line-col"] {
+  border: 2px solid rgba(59, 130, 246, 0.8);
+}
+
+.tile.special[data-special="bomb"] {
+  border: 2px solid rgba(244, 114, 182, 0.85);
+}
+
 .tile.matched {
   animation: pop 220ms ease-in forwards;
   box-shadow: 0 0 0 3px rgba(253, 224, 71, 0.6);
@@ -76,6 +95,14 @@ body {
 
 .tile.cascade {
   animation: settle 240ms ease-out;
+}
+
+.tile.combo {
+  box-shadow: 0 0 0 3px rgba(248, 250, 252, 0.9), 0 0 18px rgba(59, 130, 246, 0.6);
+}
+
+.tile.combo.matched {
+  animation: combo-flash 360ms ease-in-out, pop 220ms ease-in forwards;
 }
 
 @keyframes pop {
@@ -90,6 +117,21 @@ body {
   100% {
     transform: scale(0.5);
     opacity: 0;
+  }
+}
+
+@keyframes combo-flash {
+  0% {
+    transform: scale(1);
+    filter: brightness(1.1);
+  }
+  50% {
+    transform: scale(1.1);
+    filter: brightness(1.4);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
   }
 }
 
