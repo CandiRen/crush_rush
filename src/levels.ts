@@ -8,6 +8,8 @@ export interface LevelDefinition {
   moves: number;
   boardSize?: number;
   layout?: TileKind[][];
+  jellyLayout?: number[][];
+  crateLayout?: number[][];
 }
 
 export const LEVELS: LevelDefinition[] = [
@@ -21,16 +23,37 @@ export const LEVELS: LevelDefinition[] = [
   {
     id: 2,
     name: "Pola Bergantian",
-    description: "Cascade lebih panjang mulai muncul.",
+    description: "Cascade lebih panjang mulai muncul. Bersihkan jelly!",
     targetScore: 8200,
     moves: 30,
-    boardSize: 8
+    boardSize: 8,
+    jellyLayout: [
+      [1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1]
+    ]
   },
   {
     id: 3,
     name: "Ronde Pemanasan",
-    description: "Perlu rencana untuk mencapai skor tinggi.",
+    description: "Perlu rencana untuk mencapai skor tinggi sambil memecah peti.",
     targetScore: 12000,
-    moves: 28
+    moves: 28,
+    crateLayout: [
+      [0, 0, 0, 1, 1, 0, 0, 0, 0],
+      [0, 0, 1, 1, 1, 1, 0, 0, 0],
+      [0, 1, 1, 1, 1, 1, 1, 0, 0],
+      [1, 1, 1, 2, 2, 1, 1, 1, 0],
+      [1, 1, 1, 2, 3, 2, 1, 1, 1],
+      [1, 1, 1, 2, 2, 1, 1, 1, 0],
+      [0, 1, 1, 1, 1, 1, 1, 0, 0],
+      [0, 0, 1, 1, 1, 1, 0, 0, 0],
+      [0, 0, 0, 1, 1, 0, 0, 0, 0]
+    ]
   }
 ];
