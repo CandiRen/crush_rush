@@ -94,10 +94,10 @@ const TILE_THEME: Record<TileKind, TileTheme> = {
   }
 };
 
-const SPECIAL_SUFFIX: Record<SpecialType, string> = {
-  "line-row": "-",
-  "line-col": "|",
-  bomb: "B"
+const SPECIAL_ICON: Record<SpecialType, string> = {
+  "line-row": "➡️",
+  "line-col": "⬇️",
+  bomb: "💣"
 };
 
 const MISSION_STORAGE_KEY = "crush-rush-missions";
@@ -431,8 +431,13 @@ function renderBoard(
 
 function decorateTile(container: HTMLDivElement, tile: Tile): void {
   const theme = TILE_THEME[tile.kind];
-  const suffix = tile.special ? SPECIAL_SUFFIX[tile.special] : "";
-  container.textContent = `${theme.emoji}${suffix}`;
+  container.innerHTML = "";
+
+  const icon = document.createElement("span");
+  icon.className = "tile-icon";
+  icon.textContent = theme.emoji;
+  container.append(icon);
+
   container.style.background = theme.background;
   container.style.color = theme.text;
   container.dataset.kind = tile.kind;
@@ -440,6 +445,10 @@ function decorateTile(container: HTMLDivElement, tile: Tile): void {
   if (tile.special) {
     container.classList.add("special");
     container.dataset.special = tile.special;
+    const badge = document.createElement("span");
+    badge.className = `tile-special-badge special-${tile.special}`;
+    badge.textContent = SPECIAL_ICON[tile.special];
+    container.append(badge);
     container.title = `${describeSpecial(tile.special)} (${theme.name})`;
   } else {
     container.classList.remove("special");

@@ -52,7 +52,11 @@ body {
   user-select: none;
   box-sizing: border-box;
   position: relative;
-  font-size: 24px;
+}
+
+.tile-icon {
+  font-size: 28px;
+  line-height: 1;
 }
 
 .tile:hover {
@@ -88,6 +92,33 @@ body {
 
 .tile.special[data-special="bomb"] {
   border: 2px solid rgba(244, 114, 182, 0.85);
+}
+
+.tile-special-badge {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  font-size: 16px;
+  line-height: 1;
+  background: rgba(15, 23, 42, 0.75);
+  color: #f8fafc;
+  border-radius: 10px;
+  padding: 2px 4px;
+  display: grid;
+  place-items: center;
+  z-index: 3;
+}
+
+.tile-special-badge.special-line-row {
+  background: rgba(34, 197, 94, 0.8);
+}
+
+.tile-special-badge.special-line-col {
+  background: rgba(59, 130, 246, 0.8);
+}
+
+.tile-special-badge.special-bomb {
+  background: rgba(244, 114, 182, 0.85);
 }
 
 .tile.jelly::after {
