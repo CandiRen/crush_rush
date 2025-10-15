@@ -6,7 +6,7 @@ import {
   SwapFrame,
   SpecialType
 } from "./board";
-import { Game, GameStatus } from "./game";
+import { Game, GameStatus, SwapFeedback } from "./game";
 import { LEVELS } from "./levels";
 import {
   BASE_MISSIONS,
@@ -54,6 +54,16 @@ const FRAME_DURATION: Record<SwapFrame["type"], number> = {
   special: 360,
   final: 160
 };
+
+interface DragState {
+  start: Position;
+  pointerId: number;
+  originX: number;
+  originY: number;
+  element: HTMLDivElement;
+}
+
+const DRAG_THRESHOLD_PX = 10;
 
 const TILE_THEME: Record<TileKind, TileTheme> = {
   berry: {
@@ -113,6 +123,11 @@ if (!app) {
 }
 
 const shell = document.createElement("div");
+const backgroundLayer = document.createElement("div");
+const backgroundParticles = document.createElement("div");
+const headerBar = document.createElement("header");
+const headerTitle = document.createElement("h1");
+const headerSubtitle = document.createElement("p");
 const hud = document.createElement("div");
 const boardElement = document.createElement("div");
 const infoBanner = document.createElement("div");
@@ -134,7 +149,11 @@ const missionList = document.createElement("div");
 declare global {
   interface Window {
     crushRush?: {
-      debugBoard(): Board;
+      debugBoard(): {
+        board: Board;
+        jelly: number[][];
+        crate: number[][];
+      };
       skipTutorial(): void;
       loadLevel(index: number): void;
     };
@@ -149,8 +168,18 @@ let tutorialActive = true;
 let tutorialSeen = false;
 let missionState: MissionState = initializeMissionState();
 let profileState: PlayerProfile = loadProfile(PROFILE_STORAGE_KEY);
+let dragState: DragState | null = null;
+let suppressNextClick = false;
+let globalDragListenersAttached = false;
 
 shell.className = "game-shell";
+backgroundLayer.className = "background-layer";
+backgroundParticles.className = "background-particles";
+headerBar.className = "game-header";
+headerTitle.className = "game-title";
+headerTitle.textContent = "Crush Rush";
+headerSubtitle.className = "game-subtitle";
+headerSubtitle.textContent = "Petualangan Match-3 Seru Bersama Sahabat Hewan";
 hud.className = "hud";
 boardElement.className = "board";
 infoBanner.className = "status-banner";
@@ -183,6 +212,7 @@ missionHeader.textContent = "🗒️ Misi";
 missionList.className = "mission-list";
 missionPanel.append(missionHeader, missionList);
 playArea.append(boardElement, missionPanel);
+headerBar.append(headerTitle, headerSubtitle);
 
 tutorialOverlay.addEventListener("click", () => {
   tutorialActive = false;
@@ -227,7 +257,9 @@ retryButton.addEventListener("click", () => {
 });
 
 bottomBar.append(restartButton);
-shell.append(hud, playArea, infoBanner, stateBanner, bottomBar, tutorialOverlay);
+shell.append(headerBar, hud, playArea, infoBanner, stateBanner, bottomBar, tutorialOverlay);
+shell.prepend(backgroundLayer);
+backgroundLayer.append(backgroundParticles);
 app.append(shell);
 
 window.crushRush = {
@@ -424,8 +456,12 @@ function renderBoard(
         tileElement.classList.add("disabled");
       }
 
-      tileElement.addEventListener("click", () => {
-        onTileClick({ row: rowIndex, col: colIndex });
+      tileElement.addEventListener("pointerdown", (event) => {
+        onTilePointerDown({ row: rowIndex, col: colIndex }, event);
+      });
+
+      tileElement.addEventListener("click", (event) => {
+        onTileClick({ row: rowIndex, col: colIndex }, event);
       });
 
       boardElement.append(tileElement);
@@ -461,21 +497,204 @@ function decorateTile(container: HTMLDivElement, tile: Tile): void {
   }
 }
 
-function onTileClick(position: Position): void {
+function getInteractionBlockMessage(): string | null {
   if (tutorialActive) {
-    infoMessage = "Tutup layar tutorial untuk mulai bermain.";
-    render();
-    return;
+    return "Tutup layar tutorial untuk mulai bermain.";
   }
 
   if (isAnimating) {
-    infoMessage = "Tunggu animasi selesai.";
+    return "Tunggu animasi selesai.";
+  }
+
+  if (game.getStatus() !== "playing") {
+    return "Level sudah selesai. Gunakan tombol tindakan.";
+  }
+
+  return null;
+}
+
+function attachGlobalDragListeners(): void {
+  if (globalDragListenersAttached) {
+    return;
+  }
+
+  window.addEventListener("pointermove", handleBoardPointerMove, { passive: false });
+  window.addEventListener("pointerup", handleBoardPointerUp);
+  window.addEventListener("pointercancel", handleBoardPointerCancel);
+  globalDragListenersAttached = true;
+}
+
+function detachGlobalDragListeners(): void {
+  if (!globalDragListenersAttached) {
+    return;
+  }
+
+  window.removeEventListener("pointermove", handleBoardPointerMove);
+  window.removeEventListener("pointerup", handleBoardPointerUp);
+  window.removeEventListener("pointercancel", handleBoardPointerCancel);
+  globalDragListenersAttached = false;
+}
+
+function cleanupDragState(releaseCapture = true): DragState | null {
+  const state = dragState;
+
+  if (state && releaseCapture) {
+    try {
+      state.element.releasePointerCapture(state.pointerId);
+    } catch (error) {
+      // Ignore release failures
+    }
+  }
+
+  dragState = null;
+  detachGlobalDragListeners();
+  return state ?? null;
+}
+
+function onTilePointerDown(position: Position, event: PointerEvent): void {
+  if (!event.isPrimary) {
+    return;
+  }
+
+  if (event.pointerType === "mouse" && event.button !== 0) {
+    return;
+  }
+
+  if (dragState) {
+    return;
+  }
+
+  const blockMessage = getInteractionBlockMessage();
+  if (blockMessage) {
+    infoMessage = blockMessage;
     render();
     return;
   }
 
-  if (game.getStatus() !== "playing") {
-    infoMessage = "Level sudah selesai. Gunakan tombol tindakan.";
+  dragState = {
+    start: position,
+    pointerId: event.pointerId,
+    originX: event.clientX,
+    originY: event.clientY,
+    element: event.currentTarget as HTMLDivElement
+  };
+
+  try {
+    (event.currentTarget as HTMLDivElement).setPointerCapture(event.pointerId);
+  } catch (error) {
+    // Ignore pointer capture errors (e.g., when unsupported)
+  }
+
+  if (event.pointerType === "touch") {
+    event.preventDefault();
+  }
+
+  attachGlobalDragListeners();
+}
+
+function handleBoardPointerMove(event: PointerEvent): void {
+  if (!dragState || event.pointerId !== dragState.pointerId) {
+    return;
+  }
+
+  const deltaX = event.clientX - dragState.originX;
+  const deltaY = event.clientY - dragState.originY;
+  const maxDelta = Math.max(Math.abs(deltaX), Math.abs(deltaY));
+
+  if (maxDelta < DRAG_THRESHOLD_PX) {
+    return;
+  }
+
+  const horizontal = Math.abs(deltaX) > Math.abs(deltaY);
+  const direction: Position = horizontal
+    ? { row: 0, col: deltaX > 0 ? 1 : -1 }
+    : { row: deltaY > 0 ? 1 : -1, col: 0 };
+
+  const origin = cleanupDragState();
+  if (!origin) {
+    return;
+  }
+
+  const target: Position = {
+    row: origin.start.row + direction.row,
+    col: origin.start.col + direction.col
+  };
+
+  suppressNextClick = true;
+
+  if (!isPositionInBounds(target)) {
+    suppressNextClick = false;
+    return;
+  }
+
+  event.preventDefault();
+  attemptDirectSwap(origin.start, target);
+}
+
+function handleBoardPointerUp(event: PointerEvent): void {
+  if (!dragState || event.pointerId !== dragState.pointerId) {
+    return;
+  }
+  cleanupDragState();
+}
+
+function handleBoardPointerCancel(event: PointerEvent): void {
+  if (!dragState || event.pointerId !== dragState.pointerId) {
+    return;
+  }
+  cleanupDragState();
+}
+
+function attemptDirectSwap(start: Position, target: Position): void {
+  const blockMessage = getInteractionBlockMessage();
+  if (blockMessage) {
+    infoMessage = blockMessage;
+    render();
+    return;
+  }
+
+  selected = null;
+  const result = game.trySwap(start, target);
+
+  if (!result.success) {
+    if (result.reason === "no-match") {
+      infoMessage = "Swap tidak menghasilkan match.";
+    } else {
+      infoMessage = "Langkah tidak valid.";
+    }
+    if (game.hasJellyTarget()) {
+      infoMessage += ` | Jelly tersisa: ${game.getJellyRemaining()}`;
+    }
+    if (game.hasCrateTarget()) {
+      infoMessage += ` | Crate tersisa: ${game.getCrateRemaining()}`;
+    }
+    render();
+    return;
+  }
+
+  handleSuccessfulSwap(result);
+}
+
+function isPositionInBounds(position: Position): boolean {
+  const size = game.getBoard().length;
+  return (
+    position.row >= 0 &&
+    position.col >= 0 &&
+    position.row < size &&
+    position.col < size
+  );
+}
+
+function onTileClick(position: Position, event?: MouseEvent): void {
+  if (suppressNextClick) {
+    suppressNextClick = false;
+    event?.preventDefault();
+    return;
+  }
+
+  const blockMessage = getInteractionBlockMessage();
+  if (blockMessage) {
+    infoMessage = blockMessage;
     render();
     return;
   }
@@ -517,6 +736,10 @@ function onTileClick(position: Position): void {
     return;
   }
 
+  handleSuccessfulSwap(result);
+}
+
+function handleSuccessfulSwap(result: SwapFeedback): void {
   const firstCascade = result.cascades[0];
   const removalCount = firstCascade
     ? firstCascade.removed.length + firstCascade.createdSpecials.length

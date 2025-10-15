@@ -6,15 +6,56 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top, #1e3a8a, #0f172a 55%);
+  background: radial-gradient(circle at top, rgba(30, 64, 175, 0.65), rgba(15, 23, 42, 0.95) 55%);
+  position: relative;
+  overflow-x: hidden;
 }
 
 #app {
+  position: relative;
+  z-index: 1;
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 40px 24px;
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: -40vh;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.25) 0%, transparent 60%);
+  animation: floatGlow 18s linear infinite;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+body::after {
+  animation-duration: 22s;
+  animation-direction: reverse;
+  background: radial-gradient(circle, rgba(236, 72, 153, 0.18) 0%, transparent 65%);
+}
+
+.background-layer {
+  position: absolute;
+  inset: -120px;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.background-particles {
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(4px 4px at 20% 25%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(3px 3px at 60% 45%, rgba(96, 165, 250, 0.45), transparent),
+    radial-gradient(2px 2px at 80% 65%, rgba(236, 72, 153, 0.4), transparent),
+    radial-gradient(3px 3px at 40% 75%, rgba(34, 197, 94, 0.38), transparent);
+  animation: twinkle 12s ease-in-out infinite;
+  opacity: 0.9;
 }
 
 .game-shell {
@@ -35,6 +76,33 @@ body {
   grid-template-columns: minmax(0, 1fr) minmax(200px, 240px);
   gap: 24px;
   align-items: start;
+}
+
+.game-header {
+  display: grid;
+  gap: 4px;
+  text-align: center;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.35), rgba(236, 72, 153, 0.35));
+  border-radius: 20px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.game-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: #f8fafc;
+  text-transform: uppercase;
+}
+
+.game-subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: rgba(224, 231, 255, 0.85);
+  letter-spacing: 0.5px;
 }
 
 .board {
@@ -420,6 +488,10 @@ button.ghost:hover {
   border-color: rgba(14, 165, 233, 0.5);
 }
 
+.mission.claimed .mission-claim {
+  display: none;
+}
+
 .mission-title {
   font-weight: 600;
   font-size: 14px;
@@ -431,25 +503,26 @@ button.ghost:hover {
   color: rgba(226, 232, 240, 0.86);
 }
 
+.mission-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.35);
+  overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.35);
+}
+
+.mission-progress-fill {
+  height: 100%;
+  background: linear-gradient(135deg, #38bdf8, #3b82f6);
+  border-radius: inherit;
+  transition: width 220ms ease;
+}
+
 .mission-footer {
   display: flex;
   justify-content: space-between;
   font-size: 12px;
   color: rgba(226, 232, 240, 0.88);
-}
-
-.mission-progress {
-  height: 6px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.4);
-  overflow: hidden;
-}
-
-.mission-progress-fill {
-  height: 100%;
-  background: linear-gradient(135deg, #60a5fa, #2563eb);
-  border-radius: inherit;
-  transition: width 220ms ease;
 }
 
 .mission-claim {
@@ -482,5 +555,20 @@ button.ghost:hover {
 
   .mission-panel {
     order: -1;
+  }
+}
+
+@keyframes floatGlow {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translate3d(12vw, 4vh, 0) scale(1.1);
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate3d(-8vw, 6vh, 0) scale(1);
+    opacity: 0.6;
   }
 }
