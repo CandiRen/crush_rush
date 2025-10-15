@@ -64,6 +64,8 @@ interface DragState {
 }
 
 const DRAG_THRESHOLD_PX = 10;
+const MAX_DRAG_OFFSET_PX = 28;
+const SWAP_ANIMATION_DURATION = 160;
 
 const TILE_THEME: Record<TileKind, TileTheme> = {
   berry: {
@@ -171,6 +173,7 @@ let profileState: PlayerProfile = loadProfile(PROFILE_STORAGE_KEY);
 let dragState: DragState | null = null;
 let suppressNextClick = false;
 let globalDragListenersAttached = false;
+let swapInProgress = false;
 
 shell.className = "game-shell";
 backgroundLayer.className = "background-layer";
@@ -408,6 +411,8 @@ function renderBoard(
     row.forEach((tile, colIndex) => {
       const tileElement = document.createElement("div");
       tileElement.className = "tile";
+      tileElement.dataset.row = rowIndex.toString();
+      tileElement.dataset.col = colIndex.toString();
       const jellyValue = jellyGrid[rowIndex]?.[colIndex] ?? 0;
       const crateValue = crateGrid[rowIndex]?.[colIndex] ?? 0;
 
@@ -546,9 +551,20 @@ function cleanupDragState(releaseCapture = true): DragState | null {
     }
   }
 
+  if (state) {
+    clearTileAnimation(state.element);
+  }
+
   dragState = null;
   detachGlobalDragListeners();
   return state ?? null;
+}
+
+function clearTileAnimation(element: HTMLDivElement): void {
+  element.classList.remove("dragging", "swap-preview", "swap-revert");
+  element.style.removeProperty("--tile-translate-x");
+  element.style.removeProperty("--tile-translate-y");
+  element.style.removeProperty("--tile-scale");
 }
 
 function onTilePointerDown(position: Position, event: PointerEvent): void {
@@ -557,6 +573,10 @@ function onTilePointerDown(position: Position, event: PointerEvent): void {
   }
 
   if (event.pointerType === "mouse" && event.button !== 0) {
+    return;
+  }
+
+  if (swapInProgress) {
     return;
   }
 
@@ -578,6 +598,12 @@ function onTilePointerDown(position: Position, event: PointerEvent): void {
     originY: event.clientY,
     element: event.currentTarget as HTMLDivElement
   };
+
+  const element = dragState.element;
+  element.classList.add("dragging");
+  element.style.setProperty("--tile-translate-x", "0px");
+  element.style.setProperty("--tile-translate-y", "0px");
+  element.style.setProperty("--tile-scale", "1.1");
 
   try {
     (event.currentTarget as HTMLDivElement).setPointerCapture(event.pointerId);
@@ -602,6 +628,10 @@ function handleBoardPointerMove(event: PointerEvent): void {
   const maxDelta = Math.max(Math.abs(deltaX), Math.abs(deltaY));
 
   if (maxDelta < DRAG_THRESHOLD_PX) {
+    updateDragVisual(deltaX, deltaY);
+    if (event.pointerType !== "mouse") {
+      event.preventDefault();
+    }
     return;
   }
 
@@ -645,34 +675,24 @@ function handleBoardPointerCancel(event: PointerEvent): void {
   cleanupDragState();
 }
 
+function updateDragVisual(deltaX: number, deltaY: number): void {
+  if (!dragState) {
+    return;
+  }
+  const element = dragState.element;
+  const horizontal = Math.abs(deltaX) >= Math.abs(deltaY);
+  const translateX = horizontal ? clamp(deltaX, -MAX_DRAG_OFFSET_PX, MAX_DRAG_OFFSET_PX) : 0;
+  const translateY = horizontal ? 0 : clamp(deltaY, -MAX_DRAG_OFFSET_PX, MAX_DRAG_OFFSET_PX);
+  element.style.setProperty("--tile-translate-x", `${translateX}px`);
+  element.style.setProperty("--tile-translate-y", `${translateY}px`);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 function attemptDirectSwap(start: Position, target: Position): void {
-  const blockMessage = getInteractionBlockMessage();
-  if (blockMessage) {
-    infoMessage = blockMessage;
-    render();
-    return;
-  }
-
-  selected = null;
-  const result = game.trySwap(start, target);
-
-  if (!result.success) {
-    if (result.reason === "no-match") {
-      infoMessage = "Swap tidak menghasilkan match.";
-    } else {
-      infoMessage = "Langkah tidak valid.";
-    }
-    if (game.hasJellyTarget()) {
-      infoMessage += ` | Jelly tersisa: ${game.getJellyRemaining()}`;
-    }
-    if (game.hasCrateTarget()) {
-      infoMessage += ` | Crate tersisa: ${game.getCrateRemaining()}`;
-    }
-    render();
-    return;
-  }
-
-  handleSuccessfulSwap(result);
+  void processSwap(start, target);
 }
 
 function isPositionInBounds(position: Position): boolean {
@@ -685,9 +705,20 @@ function isPositionInBounds(position: Position): boolean {
   );
 }
 
+function positionsAreAdjacent(a: Position, b: Position): boolean {
+  const rowDiff = Math.abs(a.row - b.row);
+  const colDiff = Math.abs(a.col - b.col);
+  return (rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1);
+}
+
 function onTileClick(position: Position, event?: MouseEvent): void {
   if (suppressNextClick) {
     suppressNextClick = false;
+    event?.preventDefault();
+    return;
+  }
+
+  if (swapInProgress) {
     event?.preventDefault();
     return;
   }
@@ -713,30 +744,127 @@ function onTileClick(position: Position, event?: MouseEvent): void {
     return;
   }
 
-  const result = game.trySwap(selected, position);
-
-  if (!result.success) {
-    if (result.reason === "not-adjacent") {
-      selected = position;
-      infoMessage = "Permen tidak bertetangga. Seleksi digeser.";
-    } else if (result.reason === "no-match") {
-      selected = null;
-      infoMessage = "Swap tidak menghasilkan match.";
-    } else {
-      selected = null;
-      infoMessage = "Langkah tidak valid.";
-    }
-    if (game.hasJellyTarget()) {
-      infoMessage += ` | Jelly tersisa: ${game.getJellyRemaining()}`;
-    }
-    if (game.hasCrateTarget()) {
-      infoMessage += ` | Crate tersisa: ${game.getCrateRemaining()}`;
-    }
+  if (!positionsAreAdjacent(selected, position)) {
+    selected = position;
+    infoMessage = "Permen tidak bertetangga. Seleksi digeser.";
     render();
     return;
   }
 
-  handleSuccessfulSwap(result);
+  void processSwap(selected, position);
+}
+
+async function processSwap(start: Position, target: Position): Promise<void> {
+  if (swapInProgress) {
+    return;
+  }
+
+  const blockMessage = getInteractionBlockMessage();
+  if (blockMessage) {
+    infoMessage = blockMessage;
+    render();
+    return;
+  }
+
+  swapInProgress = true;
+  selected = null;
+
+  try {
+    const result = game.trySwap(start, target);
+    let previewPromise: Promise<void> | null = null;
+
+    if (result.success || result.reason === "no-match") {
+      previewPromise = playSwapPreview(start, target, { revert: !result.success });
+    }
+
+    if (previewPromise) {
+      await previewPromise;
+    }
+
+    if (!result.success) {
+      let message: string;
+      if (result.reason === "no-match") {
+        message = "Swap tidak menghasilkan match.";
+      } else if (result.reason === "not-adjacent") {
+        message = "Permen tidak bertetangga.";
+      } else if (result.reason === "out-of-bounds") {
+        message = "Langkah di luar papan.";
+      } else {
+        message = "Langkah tidak valid.";
+      }
+
+      if (game.hasJellyTarget()) {
+        message += ` | Jelly tersisa: ${game.getJellyRemaining()}`;
+      }
+      if (game.hasCrateTarget()) {
+        message += ` | Crate tersisa: ${game.getCrateRemaining()}`;
+      }
+
+      infoMessage = message;
+      render();
+      return;
+    }
+
+    handleSuccessfulSwap(result);
+  } finally {
+    swapInProgress = false;
+  }
+}
+
+function getTileElement(position: Position): HTMLDivElement | null {
+  return boardElement.querySelector<HTMLDivElement>(
+    `.tile[data-row="${position.row}"][data-col="${position.col}"]`
+  );
+}
+
+function playSwapPreview(
+  start: Position,
+  target: Position,
+  options: { revert: boolean }
+): Promise<void> {
+  const sourceElement = getTileElement(start);
+  const targetElement = getTileElement(target);
+
+  if (!sourceElement || !targetElement) {
+    return Promise.resolve();
+  }
+
+  const sourceRect = sourceElement.getBoundingClientRect();
+  const targetRect = targetElement.getBoundingClientRect();
+  const deltaX = targetRect.left - sourceRect.left;
+  const deltaY = targetRect.top - sourceRect.top;
+
+  sourceElement.classList.add("swap-preview");
+  targetElement.classList.add("swap-preview");
+  sourceElement.style.setProperty("--tile-translate-x", `${deltaX}px`);
+  sourceElement.style.setProperty("--tile-translate-y", `${deltaY}px`);
+  targetElement.style.setProperty("--tile-translate-x", `${-deltaX}px`);
+  targetElement.style.setProperty("--tile-translate-y", `${-deltaY}px`);
+
+  boardElement.classList.add("swap-animating");
+
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      if (options.revert) {
+        sourceElement.classList.add("swap-revert");
+        targetElement.classList.add("swap-revert");
+        sourceElement.style.setProperty("--tile-translate-x", "0px");
+        sourceElement.style.setProperty("--tile-translate-y", "0px");
+        targetElement.style.setProperty("--tile-translate-x", "0px");
+        targetElement.style.setProperty("--tile-translate-y", "0px");
+
+        window.setTimeout(() => {
+          clearTileAnimation(sourceElement);
+          clearTileAnimation(targetElement);
+          boardElement.classList.remove("swap-animating");
+          resolve();
+        }, SWAP_ANIMATION_DURATION);
+      } else {
+        boardElement.classList.remove("swap-animating");
+        resolve();
+      }
+    }, SWAP_ANIMATION_DURATION);
+  });
 }
 
 function handleSuccessfulSwap(result: SwapFeedback): void {
