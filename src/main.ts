@@ -143,10 +143,25 @@ const restartButton = document.createElement("button");
 const tutorialOverlay = document.createElement("div");
 const nextButton = document.createElement("button");
 const retryButton = document.createElement("button");
+const menuButton = document.createElement("button");
 const playArea = document.createElement("div");
 const missionPanel = document.createElement("div");
 const missionHeader = document.createElement("div");
 const missionList = document.createElement("div");
+const mainMenu = document.createElement("div");
+const menuHeader = document.createElement("div");
+const menuTitle = document.createElement("h1");
+const menuSubtitle = document.createElement("p");
+const menuStats = document.createElement("div");
+const menuStatLevelValue = document.createElement("span");
+const menuStatTargetValue = document.createElement("span");
+const menuStatMovesValue = document.createElement("span");
+const menuStatCoinsValue = document.createElement("span");
+const menuMissionSummary = document.createElement("p");
+const menuActions = document.createElement("div");
+const menuStartButton = document.createElement("button");
+const menuContinueButton = document.createElement("button");
+const menuFooterHint = document.createElement("p");
 
 declare global {
   interface Window {
@@ -174,6 +189,7 @@ let dragState: DragState | null = null;
 let suppressNextClick = false;
 let globalDragListenersAttached = false;
 let swapInProgress = false;
+let currentView: "menu" | "game" = "menu";
 
 shell.className = "game-shell";
 backgroundLayer.className = "background-layer";
@@ -195,6 +211,8 @@ stateBanner.append(stateMessage, stateStars, stateDetail, stateActions);
 bottomBar.className = "hud";
 restartButton.className = "primary";
 restartButton.textContent = "Mulai Ulang";
+menuButton.className = "ghost";
+menuButton.textContent = "Ke Menu Utama";
 tutorialOverlay.className = "tutorial-overlay";
 tutorialOverlay.innerHTML = `
   <div>
@@ -216,6 +234,35 @@ missionList.className = "mission-list";
 missionPanel.append(missionHeader, missionList);
 playArea.append(boardElement, missionPanel);
 headerBar.append(headerTitle, headerSubtitle);
+
+mainMenu.className = "main-menu";
+menuHeader.className = "menu-header";
+menuTitle.className = "menu-title";
+menuTitle.textContent = "Crush Rush";
+menuSubtitle.className = "menu-subtitle";
+menuSubtitle.textContent = "Rencanakan langkahmu, kumpulkan combo, dan raih skor bintang!";
+menuStats.className = "menu-stats";
+menuMissionSummary.className = "menu-mission-summary";
+menuMissionSummary.textContent = "Misi aktif siap dijalankan. Masuk ke permainan untuk progres lebih lanjut.";
+menuActions.className = "menu-actions";
+menuStartButton.className = "primary";
+menuStartButton.textContent = "Mulai Petualangan";
+menuContinueButton.className = "ghost";
+menuContinueButton.textContent = "Lanjutkan Permainan";
+menuFooterHint.className = "menu-footer-hint";
+menuFooterHint.textContent = "Kumpulkan bintang untuk membuka misi dan hadiah baru.";
+menuStatLevelValue.textContent = "-";
+menuStatTargetValue.textContent = "-";
+menuStatMovesValue.textContent = "-";
+menuStatCoinsValue.textContent = "-";
+const menuLevelStat = createMenuStatBlock("Level Saat Ini", menuStatLevelValue);
+const menuTargetStat = createMenuStatBlock("Target Skor", menuStatTargetValue);
+const menuMovesStat = createMenuStatBlock("Langkah Tersedia", menuStatMovesValue);
+const menuCoinsStat = createMenuStatBlock("Koin", menuStatCoinsValue);
+menuStats.append(menuLevelStat, menuTargetStat, menuMovesStat, menuCoinsStat);
+menuHeader.append(menuTitle, menuSubtitle);
+menuActions.append(menuStartButton, menuContinueButton);
+mainMenu.append(menuHeader, menuStats, menuMissionSummary, menuActions, menuFooterHint);
 
 tutorialOverlay.addEventListener("click", () => {
   tutorialActive = false;
@@ -259,11 +306,28 @@ retryButton.addEventListener("click", () => {
   });
 });
 
-bottomBar.append(restartButton);
+menuStartButton.addEventListener("click", () => {
+  loadLevel(0, {
+    message: "Level pertama dimulai. Bentuk combo terbaikmu!",
+    showTutorial: !tutorialSeen
+  });
+  enterGame();
+});
+
+menuContinueButton.addEventListener("click", () => {
+  enterGame();
+});
+
+menuButton.addEventListener("click", () => {
+  showMenu();
+});
+
+bottomBar.append(restartButton, menuButton);
 shell.append(headerBar, hud, playArea, infoBanner, stateBanner, bottomBar, tutorialOverlay);
 shell.prepend(backgroundLayer);
 backgroundLayer.append(backgroundParticles);
-app.append(shell);
+app.append(mainMenu, shell);
+shell.classList.add("hidden");
 
 window.crushRush = {
   debugBoard() {
@@ -314,6 +378,63 @@ function loadLevel(index: number, options?: { showTutorial?: boolean; message?: 
   renderMissionPanel();
 }
 
+function enterGame(): void {
+  if (currentView === "game") {
+    render();
+    renderMissionPanel();
+    return;
+  }
+
+  currentView = "game";
+  mainMenu.classList.add("hidden");
+  shell.classList.remove("hidden");
+  render();
+  renderMissionPanel();
+}
+
+function showMenu(): void {
+  cancelPlayback();
+  cleanupDragState();
+  resetBoardAnimations();
+  suppressNextClick = false;
+  swapInProgress = false;
+  currentView = "menu";
+  shell.classList.add("hidden");
+  mainMenu.classList.remove("hidden");
+  updateMenuView();
+}
+
+function updateMenuView(): void {
+  const level = LEVELS[currentLevelIndex];
+  menuStatLevelValue.textContent = `Level ${level.id} – ${level.name}`;
+  menuStatTargetValue.textContent = game
+    .getTargetScore()
+    .toLocaleString("id-ID");
+  menuStatMovesValue.textContent = `${game.getMovesLeft()} / ${level.moves}`;
+  menuStatCoinsValue.textContent = profileState.softCurrency.toLocaleString("id-ID");
+
+  const totalMissions = missionState.missions.length;
+  const completedMissions = missionState.missions.filter((mission) => {
+    const progress = missionState.progress[mission.id];
+    return progress?.completed ?? false;
+  }).length;
+  const claimableMissions = missionState.missions.filter((mission) => {
+    const progress = missionState.progress[mission.id];
+    return !!progress?.completed && !progress?.claimed;
+  }).length;
+
+  if (totalMissions === 0) {
+    menuMissionSummary.textContent =
+      "Belum ada misi aktif. Selesaikan level untuk membuka misi baru.";
+  } else if (claimableMissions > 0) {
+    menuMissionSummary.textContent = `${claimableMissions} misi siap diklaim! Masuk ke permainan untuk mengambil hadiah.`;
+  } else {
+    menuMissionSummary.textContent = `Misi aktif: ${completedMissions}/${totalMissions} selesai.`;
+  }
+
+  menuContinueButton.disabled = currentView === "game";
+}
+
 function render(): void {
   const status = game.getStatus();
   const activeFrame = playback ? playback.frames[playback.index] : null;
@@ -347,6 +468,8 @@ function render(): void {
   } else {
     tutorialOverlay.classList.add("hidden");
   }
+
+  updateMenuView();
 }
 
 function renderHud(): void {
@@ -390,6 +513,17 @@ function createHudItem(label: string, value: string): HTMLDivElement {
   const strong = document.createElement("strong");
   strong.textContent = value;
   container.append(title, strong);
+  return container;
+}
+
+function createMenuStatBlock(label: string, valueElement: HTMLSpanElement): HTMLDivElement {
+  const container = document.createElement("div");
+  container.className = "menu-stat";
+  const title = document.createElement("span");
+  title.className = "menu-stat-label";
+  title.textContent = label;
+  valueElement.className = "menu-stat-value";
+  container.append(title, valueElement);
   return container;
 }
 
@@ -565,6 +699,14 @@ function clearTileAnimation(element: HTMLDivElement): void {
   element.style.removeProperty("--tile-translate-x");
   element.style.removeProperty("--tile-translate-y");
   element.style.removeProperty("--tile-scale");
+}
+
+function resetBoardAnimations(): void {
+  boardElement.classList.remove("swap-animating");
+  const tiles = boardElement.querySelectorAll<HTMLDivElement>(".tile");
+  tiles.forEach((tile) => {
+    clearTileAnimation(tile);
+  });
 }
 
 function onTilePointerDown(position: Position, event: PointerEvent): void {
@@ -1126,6 +1268,8 @@ function renderMissionPanel(): void {
     }
     missionList.append(buildMissionItem(mission, progress));
   }
+
+  updateMenuView();
 }
 
 function buildMissionItem(mission: MissionDefinition, progress: MissionProgress): HTMLDivElement {
@@ -1227,3 +1371,4 @@ function formatSpecialList(labels: string[]): string {
 
 render();
 renderMissionPanel();
+showMenu();
