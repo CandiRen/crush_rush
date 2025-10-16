@@ -55,6 +55,7 @@ export class Game {
   private initialJellyCount = 0;
   private crateGrid: number[][] = [];
   private initialCrateCount = 0;
+  private highestCombo = 0;
 
   constructor(level: LevelDefinition, config?: Partial<GameConfig>) {
     this.level = level;
@@ -81,6 +82,22 @@ export class Game {
 
   public getTargetScore(): number {
     return this.config.targetScore;
+  }
+
+  public getHighestCombo(): number {
+    return this.highestCombo;
+  }
+
+  public getMovesUsed(): number {
+    return Math.max(0, this.config.moves - this.movesLeft);
+  }
+
+  public getScorePerMove(): number {
+    const movesUsed = this.getMovesUsed();
+    if (movesUsed === 0) {
+      return 0;
+    }
+    return this.score / movesUsed;
   }
 
   public getJellyRemaining(): number {
@@ -204,6 +221,7 @@ export class Game {
 
     this.score += swapResult.totalScore;
     this.movesLeft = Math.max(0, this.movesLeft - 1);
+    this.highestCombo = Math.max(this.highestCombo, swapResult.cascades.length);
 
     const jellyStats = this.applyJellyFromCascades(swapResult.cascades);
     const crateStats = this.applyCrateFromCascades(swapResult.cascades);
@@ -249,6 +267,7 @@ export class Game {
     this.status = "playing";
     this.score = 0;
     this.movesLeft = this.config.moves;
+    this.highestCombo = 0;
   }
 
   private boardFromLayout(layout: TileLayout): Board {

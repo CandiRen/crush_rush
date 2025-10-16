@@ -141,6 +141,87 @@ body::after {
   color: #f8fafc;
 }
 
+.menu-levels {
+  display: grid;
+  gap: 16px;
+  text-align: left;
+}
+
+.menu-levels-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.menu-level-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.menu-level-button {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+}
+
+.menu-level-button:hover {
+  transform: translateY(-2px);
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.menu-level-button.current {
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.25), rgba(236, 72, 153, 0.25));
+  border-color: rgba(236, 72, 153, 0.4);
+}
+
+.menu-level-button.locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.menu-level-button strong {
+  font-size: 16px;
+  color: #f8fafc;
+}
+
+.menu-level-button .menu-level-subtitle {
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.76);
+}
+
+.menu-level-button .menu-level-locked {
+  color: rgba(148, 163, 184, 0.8);
+}
+
+.menu-level-button .menu-level-stars {
+  font-size: 12px;
+  color: #facc15;
+  letter-spacing: 3px;
+}
+
+.menu-level-button .menu-level-metric {
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.62);
+}
+
+.menu-level-button .menu-level-metric.secondary {
+  color: rgba(226, 232, 240, 0.48);
+}
+
 .menu-mission-summary {
   font-size: 14px;
   color: rgba(226, 232, 240, 0.78);
@@ -478,6 +559,50 @@ button:disabled {
   background: rgba(15, 23, 42, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.08);
   text-align: center;
+}
+
+.session-summary {
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  width: min(320px, calc(100% - 32px));
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 20px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.45);
+  z-index: 20;
+}
+
+.session-summary h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #f8fafc;
+}
+
+.session-summary-body {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.82);
+}
+
+.session-summary-list {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 6px;
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 13px;
+}
+
+.session-summary-list li {
+  list-style: disc;
+}
+
+.session-summary button {
+  justify-self: end;
 }
 
 .hidden {

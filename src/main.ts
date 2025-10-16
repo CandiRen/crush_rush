@@ -23,7 +23,9 @@ import {
 import {
   PlayerProfile,
   addSoftCurrency,
+  ensureLevelProgress,
   loadProfile,
+  recordLevelCompletion,
   saveProfile
 } from "./profile";
 
@@ -143,6 +145,11 @@ const restartButton = document.createElement("button");
 const tutorialOverlay = document.createElement("div");
 const nextButton = document.createElement("button");
 const retryButton = document.createElement("button");
+const summaryBanner = document.createElement("div");
+const summaryTitle = document.createElement("h3");
+const summaryBody = document.createElement("p");
+const summaryHighlights = document.createElement("ul");
+const summaryDismiss = document.createElement("button");
 const menuButton = document.createElement("button");
 const playArea = document.createElement("div");
 const missionPanel = document.createElement("div");
@@ -162,6 +169,9 @@ const menuActions = document.createElement("div");
 const menuStartButton = document.createElement("button");
 const menuContinueButton = document.createElement("button");
 const menuFooterHint = document.createElement("p");
+const menuLevelsSection = document.createElement("div");
+const menuLevelsTitle = document.createElement("h2");
+const menuLevelsList = document.createElement("div");
 
 declare global {
   interface Window {
@@ -184,12 +194,18 @@ let isAnimating = false;
 let tutorialActive = true;
 let tutorialSeen = false;
 let missionState: MissionState = initializeMissionState();
-let profileState: PlayerProfile = loadProfile(PROFILE_STORAGE_KEY);
+let profileState: PlayerProfile = ensureLevelProgress(
+  loadProfile(PROFILE_STORAGE_KEY),
+  LEVELS.length
+);
+persistProfileState();
 let dragState: DragState | null = null;
 let suppressNextClick = false;
 let globalDragListenersAttached = false;
 let swapInProgress = false;
 let currentView: "menu" | "game" = "menu";
+let lastKnownStatus: GameStatus = "loading";
+let summaryVisible = false;
 
 shell.className = "game-shell";
 backgroundLayer.className = "background-layer";
@@ -213,6 +229,13 @@ restartButton.className = "primary";
 restartButton.textContent = "Mulai Ulang";
 menuButton.className = "ghost";
 menuButton.textContent = "Ke Menu Utama";
+summaryBanner.className = "session-summary hidden";
+summaryTitle.textContent = "Hasil Sesi";
+summaryBody.className = "session-summary-body";
+summaryHighlights.className = "session-summary-list";
+summaryDismiss.className = "ghost";
+summaryDismiss.textContent = "Tutup";
+summaryBanner.append(summaryTitle, summaryBody, summaryHighlights, summaryDismiss);
 tutorialOverlay.className = "tutorial-overlay";
 tutorialOverlay.innerHTML = `
   <div>
@@ -261,8 +284,13 @@ const menuMovesStat = createMenuStatBlock("Langkah Tersedia", menuStatMovesValue
 const menuCoinsStat = createMenuStatBlock("Koin", menuStatCoinsValue);
 menuStats.append(menuLevelStat, menuTargetStat, menuMovesStat, menuCoinsStat);
 menuHeader.append(menuTitle, menuSubtitle);
+menuLevelsSection.className = "menu-levels";
+menuLevelsTitle.className = "menu-levels-title";
+menuLevelsTitle.textContent = "Pilih Level";
+menuLevelsList.className = "menu-level-list";
+menuLevelsSection.append(menuLevelsTitle, menuLevelsList);
 menuActions.append(menuStartButton, menuContinueButton);
-mainMenu.append(menuHeader, menuStats, menuMissionSummary, menuActions, menuFooterHint);
+mainMenu.append(menuHeader, menuStats, menuLevelsSection, menuMissionSummary, menuActions, menuFooterHint);
 
 tutorialOverlay.addEventListener("click", () => {
   tutorialActive = false;
@@ -322,11 +350,15 @@ menuButton.addEventListener("click", () => {
   showMenu();
 });
 
+summaryDismiss.addEventListener("click", () => {
+  hideSessionSummary();
+});
+
 bottomBar.append(restartButton, menuButton);
 shell.append(headerBar, hud, playArea, infoBanner, stateBanner, bottomBar, tutorialOverlay);
 shell.prepend(backgroundLayer);
 backgroundLayer.append(backgroundParticles);
-app.append(mainMenu, shell);
+app.append(mainMenu, shell, summaryBanner);
 shell.classList.add("hidden");
 
 window.crushRush = {
@@ -353,12 +385,23 @@ function loadLevel(index: number, options?: { showTutorial?: boolean; message?: 
     return;
   }
 
+  if (!isLevelUnlocked(index)) {
+    const lockedLevel = LEVELS[index];
+    const requirement = LEVELS[index - 1];
+    infoMessage = requirement
+      ? `Level ${lockedLevel.id} terkunci. Selesaikan Level ${requirement.id} terlebih dahulu.`
+      : "Level ini belum tersedia.";
+    updateMenuView();
+    return;
+  }
+
   cancelPlayback();
   currentLevelIndex = index;
   const level = LEVELS[currentLevelIndex];
   game.setLevel(level);
   selected = null;
   isAnimating = false;
+  lastKnownStatus = game.getStatus();
 
   const shouldShowTutorial = options?.showTutorial ?? (index === 0 && !tutorialSeen);
   tutorialActive = shouldShowTutorial;
@@ -401,6 +444,7 @@ function showMenu(): void {
   currentView = "menu";
   shell.classList.add("hidden");
   mainMenu.classList.remove("hidden");
+  hideSessionSummary();
   updateMenuView();
 }
 
@@ -412,6 +456,8 @@ function updateMenuView(): void {
     .toLocaleString("id-ID");
   menuStatMovesValue.textContent = `${game.getMovesLeft()} / ${level.moves}`;
   menuStatCoinsValue.textContent = profileState.softCurrency.toLocaleString("id-ID");
+
+  renderMenuLevels();
 
   const totalMissions = missionState.missions.length;
   const completedMissions = missionState.missions.filter((mission) => {
@@ -435,8 +481,214 @@ function updateMenuView(): void {
   menuContinueButton.disabled = currentView === "game";
 }
 
+function renderMenuLevels(): void {
+  menuLevelsList.innerHTML = "";
+
+  const totalLevels = LEVELS.length;
+  for (let index = 0; index < totalLevels; index++) {
+    const level = LEVELS[index];
+    const button = document.createElement("button");
+    button.className = "menu-level-button";
+    const progress = profileState.levelProgress[level.id];
+    const unlocked = progress?.unlocked ?? false;
+    if (index === currentLevelIndex) {
+      button.classList.add("current");
+    }
+    if (!unlocked) {
+      button.classList.add("locked");
+      button.disabled = true;
+    }
+
+    const title = document.createElement("strong");
+    title.textContent = `Level ${level.id}`;
+    const subtitle = document.createElement("span");
+    subtitle.className = "menu-level-subtitle";
+    const contents: HTMLElement[] = [title, subtitle];
+    if (unlocked) {
+      subtitle.textContent = level.name;
+      const bestScore = progress?.bestScore ?? 0;
+      button.title = bestScore > 0
+        ? `Skor terbaik: ${bestScore.toLocaleString("id-ID")}`
+        : "Belum ada skor terbaik.";
+      const bestStars = progress?.bestStars ?? 0;
+      if (bestStars > 0) {
+        const stars = document.createElement("span");
+        stars.className = "menu-level-stars";
+        stars.textContent = renderStars(bestStars);
+        contents.push(stars);
+      }
+
+      const bestCombo = progress?.bestCombo ?? 0;
+      const bestEfficiency = progress?.bestEfficiency ?? 0;
+      if (bestCombo > 0 || bestEfficiency > 0) {
+        const metrics = document.createElement("span");
+        metrics.className = "menu-level-metric";
+        const comboLabel = bestCombo > 0 ? bestCombo.toString() : "-";
+        const efficiencyLabel = bestEfficiency > 0 ? bestEfficiency.toFixed(2) : "-";
+        metrics.textContent = `⚡ Combo: ${comboLabel} • 🎯 Skor/Langkah: ${efficiencyLabel}`;
+        contents.push(metrics);
+      }
+
+      const lastCombo = progress?.lastCombo ?? 0;
+      const lastEfficiency = progress?.lastEfficiency ?? 0;
+      if (lastCombo > 0 || lastEfficiency > 0) {
+        const recent = document.createElement("span");
+        recent.className = "menu-level-metric secondary";
+        const lastComboLabel = lastCombo > 0 ? lastCombo.toString() : "-";
+        const lastEfficiencyLabel = lastEfficiency > 0 ? lastEfficiency.toFixed(2) : "-";
+        recent.textContent = `⌛ Terakhir: Combo ${lastComboLabel} • Skor/Langkah ${lastEfficiencyLabel}`;
+        contents.push(recent);
+      }
+    } else {
+      button.title = "Selesaikan level sebelumnya untuk membuka.";
+      const requiredLevel = LEVELS[index - 1];
+      subtitle.textContent = requiredLevel
+        ? `Terkunci • Selesaikan Level ${requiredLevel.id}`
+        : "Terkunci";
+      subtitle.classList.add("menu-level-locked");
+    }
+
+    if (unlocked) {
+      button.addEventListener("click", () => {
+        loadLevel(index, {
+          showTutorial: index === 0 && !tutorialSeen,
+          message: level.description ?? "Selamat bermain."
+        });
+        enterGame();
+      });
+    }
+
+    button.append(...contents);
+    menuLevelsList.append(button);
+  }
+}
+
+function handleStatusChange(status: GameStatus): void {
+  if (status === lastKnownStatus) {
+    return;
+  }
+
+  if (status === "won") {
+    handleLevelCompletion();
+  }
+
+  lastKnownStatus = status;
+}
+
+function handleLevelCompletion(): void {
+  const level = LEVELS[currentLevelIndex];
+  const stars = game.getStarCount();
+  const score = game.getScore();
+  const combo = game.getHighestCombo();
+  const efficiency = Number(game.getScorePerMove().toFixed(2));
+
+  const previousProfile = profileState;
+  const { profile: updatedProfile, unlockedLevels } = recordLevelCompletion(
+    profileState,
+    level.id,
+    stars,
+    score,
+    LEVELS.length,
+    combo,
+    efficiency
+  );
+
+  if (updatedProfile !== previousProfile) {
+    profileState = ensureLevelProgress(updatedProfile, LEVELS.length);
+    persistProfileState();
+  }
+
+  const previousLevelProgress = previousProfile.levelProgress[level.id];
+  const previousBest = previousLevelProgress
+    ? {
+        stars: previousLevelProgress.bestStars,
+        combo: previousLevelProgress.bestCombo,
+        efficiency: previousLevelProgress.bestEfficiency
+      }
+    : { stars: 0, combo: 0, efficiency: 0 };
+
+  if (unlockedLevels.length > 0) {
+    const unlockedLabels = unlockedLevels
+      .map((id) => {
+        const unlockedLevel = LEVELS.find((item) => item.id === id);
+        return unlockedLevel ? `Level ${unlockedLevel.id} – ${unlockedLevel.name}` : `Level ${id}`;
+      })
+      .join(", ");
+    if (!infoMessage.includes(unlockedLabels)) {
+      const prefix = infoMessage ? `${infoMessage} | ` : "";
+      infoMessage = `${prefix}${unlockedLabels} terbuka!`;
+    }
+  }
+
+  updateMenuView();
+  showSessionSummary({
+    stars,
+    score,
+    combo,
+    efficiency,
+    previousBest,
+    level,
+    unlockedLevels
+  });
+}
+
+function showSessionSummary({
+  stars,
+  score,
+  combo,
+  efficiency,
+  previousBest,
+  level,
+  unlockedLevels
+}: {
+  stars: number;
+  score: number;
+  combo: number;
+  efficiency: number;
+  previousBest: { stars: number; combo: number; efficiency: number };
+  level: (typeof LEVELS)[number];
+  unlockedLevels: number[];
+}): void {
+  summaryTitle.textContent = `Level ${level.id} selesai!`;
+  summaryBody.textContent = `Skor ${score.toLocaleString("id-ID")}.`;
+  summaryHighlights.innerHTML = "";
+
+  const starItem = document.createElement("li");
+  const bestStars = Math.max(stars, previousBest.stars);
+  starItem.textContent = `⭐ Bintang: ${stars} (rekor: ${bestStars})`;
+  summaryHighlights.append(starItem);
+
+  const comboItem = document.createElement("li");
+  const bestCombo = Math.max(combo, previousBest.combo);
+  comboItem.textContent = `⚡ Combo terbaik: ${combo} (rekor: ${bestCombo})`;
+  summaryHighlights.append(comboItem);
+
+  const efficiencyItem = document.createElement("li");
+  const bestEfficiency = Math.max(efficiency, previousBest.efficiency);
+  efficiencyItem.textContent = `🎯 Skor per langkah: ${efficiency.toFixed(2)} (rekor: ${bestEfficiency.toFixed(2)})`;
+  summaryHighlights.append(efficiencyItem);
+
+  if (unlockedLevels.length > 0) {
+    const unlockItem = document.createElement("li");
+    unlockItem.textContent = `🔓 Level baru: ${unlockedLevels.join(", ")}`;
+    summaryHighlights.append(unlockItem);
+  }
+
+  summaryBanner.classList.remove("hidden");
+  summaryVisible = true;
+}
+
+function hideSessionSummary(): void {
+  if (!summaryVisible) {
+    return;
+  }
+  summaryBanner.classList.add("hidden");
+  summaryVisible = false;
+}
+
 function render(): void {
   const status = game.getStatus();
+  handleStatusChange(status);
   const activeFrame = playback ? playback.frames[playback.index] : null;
   const boardSnapshot = activeFrame ? activeFrame.board : game.getBoard();
   const highlight = activeFrame?.removed ?? [];
@@ -483,6 +735,24 @@ function renderHud(): void {
     createHudItem("Langkah", `${game.getMovesLeft()} / ${level.moves}`),
     createHudItem("Target", game.getTargetScore().toLocaleString("id-ID"))
   ];
+
+  const currentCombo = game.getHighestCombo();
+  if (currentCombo > 0) {
+    items.push(createHudItem("Combo Terbaik", currentCombo.toString()));
+  }
+
+  const scorePerMove = game.getScorePerMove();
+  if (scorePerMove > 0) {
+    items.push(
+      createHudItem(
+        "Skor/Langkah",
+        scorePerMove.toLocaleString("id-ID", {
+          maximumFractionDigits: 1,
+          minimumFractionDigits: 1
+        })
+      )
+    );
+  }
 
   if (game.hasJellyTarget()) {
     items.push(
@@ -1179,6 +1449,15 @@ function hasNextLevel(): boolean {
   return currentLevelIndex < LEVELS.length - 1;
 }
 
+function isLevelUnlocked(index: number): boolean {
+  const level = LEVELS[index];
+  if (!level) {
+    return false;
+  }
+  const progress = profileState.levelProgress[level.id];
+  return progress?.unlocked ?? false;
+}
+
 function positionKey(position: Position): string {
   return `${position.row},${position.col}`;
 }
@@ -1252,6 +1531,7 @@ function persistMissionState(state: MissionState): void {
 }
 
 function persistProfileState(): void {
+  profileState = ensureLevelProgress(profileState, LEVELS.length);
   saveProfile(PROFILE_STORAGE_KEY, profileState);
 }
 
