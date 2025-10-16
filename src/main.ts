@@ -68,6 +68,7 @@ interface DragState {
 const DRAG_THRESHOLD_PX = 10;
 const MAX_DRAG_OFFSET_PX = 28;
 const SWAP_ANIMATION_DURATION = 160;
+const SUMMARY_ANIMATION_DURATION = 260;
 
 const TILE_THEME: Record<TileKind, TileTheme> = {
   berry: {
@@ -150,6 +151,9 @@ const summaryTitle = document.createElement("h3");
 const summaryBody = document.createElement("p");
 const summaryHighlights = document.createElement("ul");
 const summaryDismiss = document.createElement("button");
+const summaryConfetti = document.createElement("div");
+const missionToast = document.createElement("div");
+const missionToastList = document.createElement("ul");
 const menuButton = document.createElement("button");
 const playArea = document.createElement("div");
 const missionPanel = document.createElement("div");
@@ -206,6 +210,9 @@ let swapInProgress = false;
 let currentView: "menu" | "game" = "menu";
 let lastKnownStatus: GameStatus = "loading";
 let summaryVisible = false;
+let summaryHideTimer: number | null = null;
+let confettiCleanupTimer: number | null = null;
+let missionToastTimer: number | null = null;
 
 shell.className = "game-shell";
 backgroundLayer.className = "background-layer";
@@ -230,12 +237,16 @@ restartButton.textContent = "Mulai Ulang";
 menuButton.className = "ghost";
 menuButton.textContent = "Ke Menu Utama";
 summaryBanner.className = "session-summary hidden";
+summaryConfetti.className = "session-confetti";
 summaryTitle.textContent = "Hasil Sesi";
 summaryBody.className = "session-summary-body";
 summaryHighlights.className = "session-summary-list";
 summaryDismiss.className = "ghost";
 summaryDismiss.textContent = "Tutup";
-summaryBanner.append(summaryTitle, summaryBody, summaryHighlights, summaryDismiss);
+summaryBanner.append(summaryConfetti, summaryTitle, summaryBody, summaryHighlights, summaryDismiss);
+missionToast.className = "mission-toast hidden";
+missionToastList.className = "mission-toast-list";
+missionToast.append(missionToastList);
 tutorialOverlay.className = "tutorial-overlay";
 tutorialOverlay.innerHTML = `
   <div>
@@ -358,7 +369,7 @@ bottomBar.append(restartButton, menuButton);
 shell.append(headerBar, hud, playArea, infoBanner, stateBanner, bottomBar, tutorialOverlay);
 shell.prepend(backgroundLayer);
 backgroundLayer.append(backgroundParticles);
-app.append(mainMenu, shell, summaryBanner);
+app.append(mainMenu, shell, summaryBanner, missionToast);
 shell.classList.add("hidden");
 
 window.crushRush = {
@@ -583,6 +594,7 @@ function handleLevelCompletion(): void {
   const efficiency = Number(game.getScorePerMove().toFixed(2));
 
   const previousProfile = profileState;
+  const previousMissionState = missionState;
   const { profile: updatedProfile, unlockedLevels } = recordLevelCompletion(
     profileState,
     level.id,
@@ -620,6 +632,8 @@ function handleLevelCompletion(): void {
     }
   }
 
+  const newlyCompletedMissions = extractNewlyCompletedMissions(previousMissionState, missionState);
+
   updateMenuView();
   showSessionSummary({
     stars,
@@ -630,6 +644,11 @@ function handleLevelCompletion(): void {
     level,
     unlockedLevels
   });
+  if (newlyCompletedMissions.length > 0) {
+    showMissionToast(newlyCompletedMissions);
+  } else {
+    hideMissionToast();
+  }
 }
 
 function showSessionSummary({
@@ -649,22 +668,41 @@ function showSessionSummary({
   level: (typeof LEVELS)[number];
   unlockedLevels: number[];
 }): void {
-  summaryTitle.textContent = `Level ${level.id} selesai!`;
+  const bestStars = Math.max(stars, previousBest.stars);
+  const bestCombo = Math.max(combo, previousBest.combo);
+  const bestEfficiency = Math.max(efficiency, previousBest.efficiency);
+
+  const newRecords: string[] = [];
+  if (stars > previousBest.stars) {
+    newRecords.push("bintang");
+  }
+  if (combo > previousBest.combo) {
+    newRecords.push("combo");
+  }
+  if (efficiency > previousBest.efficiency) {
+    newRecords.push("skor/langkah");
+  }
+
+  if (newRecords.length > 0) {
+    const formatted = newRecords.length === 1
+      ? newRecords[0]
+      : `${newRecords.slice(0, -1).join(", ")} & ${newRecords[newRecords.length - 1]}`;
+    summaryTitle.textContent = `Rekor Baru! (${formatted})`;
+  } else {
+    summaryTitle.textContent = `Level ${level.id} selesai!`;
+  }
   summaryBody.textContent = `Skor ${score.toLocaleString("id-ID")}.`;
   summaryHighlights.innerHTML = "";
 
   const starItem = document.createElement("li");
-  const bestStars = Math.max(stars, previousBest.stars);
   starItem.textContent = `⭐ Bintang: ${stars} (rekor: ${bestStars})`;
   summaryHighlights.append(starItem);
 
   const comboItem = document.createElement("li");
-  const bestCombo = Math.max(combo, previousBest.combo);
   comboItem.textContent = `⚡ Combo terbaik: ${combo} (rekor: ${bestCombo})`;
   summaryHighlights.append(comboItem);
 
   const efficiencyItem = document.createElement("li");
-  const bestEfficiency = Math.max(efficiency, previousBest.efficiency);
   efficiencyItem.textContent = `🎯 Skor per langkah: ${efficiency.toFixed(2)} (rekor: ${bestEfficiency.toFixed(2)})`;
   summaryHighlights.append(efficiencyItem);
 
@@ -674,16 +712,151 @@ function showSessionSummary({
     summaryHighlights.append(unlockItem);
   }
 
+  if (summaryHideTimer !== null) {
+    window.clearTimeout(summaryHideTimer);
+    summaryHideTimer = null;
+  }
+
   summaryBanner.classList.remove("hidden");
+  summaryBanner.classList.remove("show");
+  void summaryBanner.offsetWidth;
+  summaryBanner.classList.add("show");
   summaryVisible = true;
+  triggerSummaryConfetti();
 }
 
 function hideSessionSummary(): void {
-  if (!summaryVisible) {
+  if (summaryHideTimer !== null) {
+    window.clearTimeout(summaryHideTimer);
+    summaryHideTimer = null;
+  }
+
+  if (!summaryVisible && summaryBanner.classList.contains("hidden")) {
     return;
   }
-  summaryBanner.classList.add("hidden");
+  summaryBanner.classList.remove("show");
   summaryVisible = false;
+  summaryHideTimer = window.setTimeout(() => {
+    if (!summaryVisible) {
+      summaryBanner.classList.add("hidden");
+    }
+    summaryHideTimer = null;
+  }, SUMMARY_ANIMATION_DURATION);
+  resetSummaryConfetti();
+}
+
+function triggerSummaryConfetti(): void {
+  if (confettiCleanupTimer !== null) {
+    window.clearTimeout(confettiCleanupTimer);
+    confettiCleanupTimer = null;
+  }
+  summaryConfetti.innerHTML = "";
+
+  const pieceCount = 14;
+  for (let index = 0; index < pieceCount; index++) {
+    const piece = document.createElement("span");
+    piece.className = "confetti-piece";
+    const offset = (Math.random() - 0.5) * 140;
+    const delay = Math.random() * 0.2;
+    const rotation = (Math.random() - 0.5) * 120;
+    const hue = Math.floor(Math.random() * 30) + 340;
+    const palette = getConfettiPalette();
+    piece.style.setProperty("--confetti-offset-x", `${offset}px`);
+    piece.style.setProperty("--confetti-delay", `${delay}s`);
+    piece.style.setProperty("--confetti-rotation", `${rotation}deg`);
+    piece.style.setProperty("--confetti-color", palette[index % palette.length]);
+    piece.style.setProperty("--confetti-hue", `${hue}`);
+    summaryConfetti.append(piece);
+  }
+
+  summaryConfetti.classList.remove("active");
+  void summaryConfetti.offsetWidth;
+  summaryConfetti.classList.add("active");
+
+  confettiCleanupTimer = window.setTimeout(() => {
+    summaryConfetti.classList.remove("active");
+    summaryConfetti.innerHTML = "";
+    confettiCleanupTimer = null;
+  }, 900);
+}
+
+function resetSummaryConfetti(): void {
+  summaryConfetti.classList.remove("active");
+  summaryConfetti.innerHTML = "";
+  if (confettiCleanupTimer !== null) {
+    window.clearTimeout(confettiCleanupTimer);
+    confettiCleanupTimer = null;
+  }
+}
+
+function getConfettiPalette(): string[] {
+  const level = LEVELS[currentLevelIndex];
+  const progress = profileState.levelProgress[level.id];
+  const stars = progress?.bestStars ?? 0;
+  if (stars >= 3) {
+    return ["#facc15", "#fde047", "#f97316", "#fb7185"];
+  }
+  if (stars === 2) {
+    return ["#38bdf8", "#fb923c", "#a855f7", "#facc15"];
+  }
+  if (stars === 1) {
+    return ["#60a5fa", "#34d399", "#fbbf24"];
+  }
+  return ["#64748b", "#38bdf8", "#f97316"];
+}
+
+function extractNewlyCompletedMissions(
+  previous: MissionState,
+  current: MissionState
+): MissionDefinition[] {
+  const newlyCompleted: MissionDefinition[] = [];
+  for (const mission of current.missions) {
+    const prevProgress = previous.progress[mission.id];
+    const currProgress = current.progress[mission.id];
+    if (!currProgress?.completed) {
+      continue;
+    }
+    if (!prevProgress?.completed) {
+      newlyCompleted.push(mission);
+    }
+  }
+  return newlyCompleted;
+}
+
+function showMissionToast(missions: MissionDefinition[]): void {
+  if (missionToastTimer !== null) {
+    window.clearTimeout(missionToastTimer);
+    missionToastTimer = null;
+  }
+  missionToastList.innerHTML = "";
+  missions.forEach((mission) => {
+    const item = document.createElement("li");
+    item.textContent = `🎯 ${mission.title} selesai! Klaim +${mission.reward}.`;
+    missionToastList.append(item);
+  });
+  missionToast.classList.remove("hidden");
+  missionToast.classList.remove("show");
+  void missionToast.offsetWidth;
+  missionToast.classList.add("show");
+  missionToastTimer = window.setTimeout(() => {
+    hideMissionToast();
+  }, 4000);
+}
+
+function hideMissionToast(): void {
+  if (missionToastTimer !== null) {
+    window.clearTimeout(missionToastTimer);
+    missionToastTimer = null;
+  }
+  if (!missionToast.classList.contains("show")) {
+    missionToast.classList.add("hidden");
+    return;
+  }
+  missionToast.classList.remove("show");
+  missionToastTimer = window.setTimeout(() => {
+    missionToast.classList.add("hidden");
+    missionToastTimer = null;
+  }, SUMMARY_ANIMATION_DURATION);
 }
 
 function render(): void {
