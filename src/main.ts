@@ -175,6 +175,10 @@ const menuContinueButton = document.createElement("button");
 const menuFooterHint = document.createElement("p");
 const menuLevelsSection = document.createElement("div");
 const menuLevelsTitle = document.createElement("h2");
+const menuLevelsContent = document.createElement("div");
+const menuMapWrapper = document.createElement("div");
+const menuMapScroll = document.createElement("div");
+const menuMapPath = document.createElement("div");
 const menuLevelsList = document.createElement("div");
 
 declare global {
@@ -298,8 +302,16 @@ menuHeader.append(menuTitle, menuSubtitle);
 menuLevelsSection.className = "menu-levels";
 menuLevelsTitle.className = "menu-levels-title";
 menuLevelsTitle.textContent = "Pilih Level";
+menuLevelsContent.className = "menu-levels-content";
+menuMapWrapper.className = "menu-level-map";
+menuMapWrapper.setAttribute("aria-label", "Peta level");
+menuMapScroll.className = "menu-map-scroll";
+menuMapPath.className = "menu-map-path";
 menuLevelsList.className = "menu-level-list";
-menuLevelsSection.append(menuLevelsTitle, menuLevelsList);
+menuMapScroll.append(menuMapPath);
+menuMapWrapper.append(menuMapScroll);
+menuLevelsContent.append(menuMapWrapper, menuLevelsList);
+menuLevelsSection.append(menuLevelsTitle, menuLevelsContent);
 menuActions.append(menuStartButton, menuContinueButton);
 mainMenu.append(menuHeader, menuStats, menuLevelsSection, menuMissionSummary, menuActions, menuFooterHint);
 
@@ -494,6 +506,7 @@ function updateMenuView(): void {
 
 function renderMenuLevels(): void {
   menuLevelsList.innerHTML = "";
+  renderLevelMap();
 
   const totalLevels = LEVELS.length;
   for (let index = 0; index < totalLevels; index++) {
@@ -571,6 +584,92 @@ function renderMenuLevels(): void {
 
     button.append(...contents);
     menuLevelsList.append(button);
+  }
+}
+
+function renderLevelMap(): void {
+  menuMapPath.innerHTML = "";
+
+  const totalLevels = LEVELS.length;
+  for (let index = 0; index < totalLevels; index++) {
+    const level = LEVELS[index];
+    const progress = profileState.levelProgress[level.id];
+    const unlocked = progress?.unlocked ?? false;
+    const completed = (progress?.bestStars ?? 0) > 0;
+    const alignment = index % 2 === 0 ? "left" : "right";
+
+    const row = document.createElement("div");
+    row.className = "menu-map-row";
+    if (index < totalLevels - 1) {
+      row.classList.add("has-next");
+    }
+    row.dataset.align = alignment;
+    const offsetValue = alignment === "left" ? "-80px" : alignment === "right" ? "80px" : "0px";
+    row.style.setProperty("--map-offset", offsetValue);
+
+    const nodeButton = document.createElement("button");
+    nodeButton.className = "map-node";
+    nodeButton.type = "button";
+    nodeButton.disabled = !unlocked;
+    if (!unlocked) {
+      nodeButton.classList.add("locked");
+    }
+    if (completed) {
+      nodeButton.classList.add("completed");
+    }
+    if (unlocked && !completed && index !== currentLevelIndex) {
+      nodeButton.classList.add("ready");
+    }
+    if (index === currentLevelIndex) {
+      nodeButton.classList.add("current");
+    }
+
+    const levelBadge = document.createElement("span");
+    levelBadge.className = "map-node-level";
+    levelBadge.textContent = level.id.toString();
+
+    const starCount = progress?.bestStars ?? 0;
+    const starLabel = document.createElement("span");
+    starLabel.className = "map-node-stars";
+    starLabel.textContent = unlocked ? renderStars(starCount) : "🔒";
+
+    nodeButton.append(levelBadge, starLabel);
+
+    if (unlocked) {
+      nodeButton.title = `Level ${level.id} – ${level.name}`;
+      nodeButton.addEventListener("click", () => {
+        loadLevel(index, {
+          showTutorial: index === 0 && !tutorialSeen,
+          message: level.description ?? "Selamat bermain."
+        });
+        enterGame();
+      });
+    } else {
+      nodeButton.title = "Terkunci. Selesaikan level sebelumnya.";
+    }
+
+    const label = document.createElement("span");
+    label.className = "map-node-label";
+    label.textContent = level.name;
+
+    row.append(nodeButton, label);
+    menuMapPath.append(row);
+  }
+
+  if (currentView === "menu") {
+    window.requestAnimationFrame(() => {
+      const currentNode = menuMapPath.querySelector<HTMLButtonElement>(".map-node.current");
+      if (!currentNode) {
+        return;
+      }
+      const container = menuMapScroll;
+      const targetTop =
+        currentNode.offsetTop - container.clientHeight / 2 + currentNode.offsetHeight / 2;
+      container.scrollTo({
+        top: Math.max(targetTop, 0),
+        behavior: "smooth"
+      });
+    });
   }
 }
 
