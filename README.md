@@ -2,6 +2,8 @@
 
 Crush Rush adalah prototipe game puzzle match-3 bertema hewan lucu yang dibangun dengan TypeScript dan Vite. Fokus utamanya adalah loop main yang responsif, progres level bertahap, dan sistem misi harian/mingguan berbasis penyimpanan lokal.
 
+![Cuplikan antarmuka Crush Rush](images/1.png)
+
 ## Fitur Utama
 - Gameplay match-3 klasik dengan grid dinamis; generator papan memastikan tidak ada deadlock awal.
 - Special candy (`line-row`, `line-col`, `bomb`, `block`) lengkap dengan efek kaskade dan skor kombo.
