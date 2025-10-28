@@ -1,5 +1,6 @@
 import {
   Board,
+  BOARD_SIZE,
   Position,
   Tile,
   TileKind,
@@ -235,6 +236,7 @@ let playback: PlaybackState | null = null;
 let isAnimating = false;
 let tutorialActive = true;
 let tutorialSeen = false;
+let menuSelectedLevelIndex = currentLevelIndex;
 let missionState: MissionState = initializeMissionState();
 let profileState: PlayerProfile = ensureLevelProgress(
   loadProfile(PROFILE_STORAGE_KEY),
@@ -347,7 +349,7 @@ menuMapWrapper.className = "menu-level-map";
 menuMapWrapper.setAttribute("aria-label", "Peta level");
 menuMapScroll.className = "menu-map-scroll";
 menuMapPath.className = "menu-map-path";
-menuLevelsList.className = "menu-level-list";
+menuLevelsList.className = "menu-level-detail";
 menuMapScroll.append(menuMapPath);
 menuMapWrapper.append(menuMapScroll);
 menuLevelsContent.append(menuMapWrapper, menuLevelsList);
@@ -459,6 +461,7 @@ function loadLevel(index: number, options?: { showTutorial?: boolean; message?: 
     return;
   }
 
+  menuSelectedLevelIndex = index;
   if (!isLevelUnlocked(index)) {
     const lockedLevel = LEVELS[index];
     const requirement = LEVELS[index - 1];
@@ -528,16 +531,22 @@ function showMenu(): void {
   mainMenu.classList.remove("hidden");
   resetHintSystem();
   hideSessionSummary();
+  menuSelectedLevelIndex = currentLevelIndex;
   updateMenuView();
 }
 
 function updateMenuView(): void {
-  const level = LEVELS[currentLevelIndex];
+  const level = LEVELS[menuSelectedLevelIndex] ?? LEVELS[currentLevelIndex];
+  if (!level) {
+    return;
+  }
+
+  const isCurrentLevelSelected = menuSelectedLevelIndex === currentLevelIndex;
+  const targetScore = isCurrentLevelSelected ? game.getTargetScore() : level.targetScore;
+  const movesRemaining = isCurrentLevelSelected ? game.getMovesLeft() : level.moves;
   menuStatLevelValue.textContent = `Level ${level.id} – ${level.name}`;
-  menuStatTargetValue.textContent = game
-    .getTargetScore()
-    .toLocaleString("id-ID");
-  menuStatMovesValue.textContent = `${game.getMovesLeft()} / ${level.moves}`;
+  menuStatTargetValue.textContent = targetScore.toLocaleString("id-ID");
+  menuStatMovesValue.textContent = `${movesRemaining} / ${level.moves}`;
   menuStatCoinsValue.textContent = profileState.softCurrency.toLocaleString("id-ID");
 
   renderMenuLevels();
@@ -565,86 +574,266 @@ function updateMenuView(): void {
 }
 
 function renderMenuLevels(): void {
-  menuLevelsList.innerHTML = "";
   renderLevelMap();
+  renderSelectedLevelDetail();
+}
 
-  const totalLevels = LEVELS.length;
-  for (let index = 0; index < totalLevels; index++) {
-    const level = LEVELS[index];
-    const button = document.createElement("button");
-    button.className = "menu-level-button";
-    const progress = profileState.levelProgress[level.id];
-    const unlocked = progress?.unlocked ?? false;
-    if (index === currentLevelIndex) {
-      button.classList.add("current");
+function renderSelectedLevelDetail(): void {
+  menuLevelsList.innerHTML = "";
+
+  const level = LEVELS[menuSelectedLevelIndex];
+  if (!level) {
+    return;
+  }
+
+  const progress = profileState.levelProgress[level.id];
+  const unlocked = progress?.unlocked ?? false;
+  const isCurrentLevel = menuSelectedLevelIndex === currentLevelIndex;
+  const boardSize = level.boardSize ?? BOARD_SIZE;
+  const jellyCells = countActiveCells(level.jellyLayout);
+  const crateCells = countActiveCells(level.crateLayout);
+  const hasJelly = jellyCells > 0;
+  const hasCrate = crateCells > 0;
+
+  const header = document.createElement("div");
+  header.className = "level-detail-header";
+
+  const badge = document.createElement("span");
+  badge.className = "level-detail-badge";
+  badge.textContent = `Level ${level.id}`;
+
+  const title = document.createElement("h3");
+  title.className = "level-detail-title";
+  title.textContent = level.name;
+
+  header.append(badge, title);
+
+  const description = document.createElement("p");
+  description.className = "level-detail-description";
+  if (unlocked) {
+    description.textContent =
+      level.description ?? "Capai target skor untuk memenangkan level ini.";
+    if (hasJelly) {
+      description.textContent += " Jangan lupakan jelly yang tersembunyi.";
     }
-    if (!unlocked) {
-      button.classList.add("locked");
-      button.disabled = true;
+    if (hasCrate) {
+      description.textContent += " Pecahkan peti untuk membuka ruang baru.";
+    }
+  } else {
+    const requirement = LEVELS[menuSelectedLevelIndex - 1];
+    const requirementLabel = requirement
+      ? `Selesaikan Level ${requirement.id} untuk membuka.`
+      : "Level ini belum tersedia.";
+    description.textContent = requirementLabel;
+  }
+
+  const metricsList = document.createElement("ul");
+  metricsList.className = "level-detail-metrics";
+  const metrics = [
+    {
+      label: "🎯 Target Skor",
+      value: (isCurrentLevel ? game.getTargetScore() : level.targetScore).toLocaleString("id-ID")
+    },
+    {
+      label: "🪄 Langkah",
+      value: `${isCurrentLevel ? game.getMovesLeft() : level.moves} / ${level.moves}`
+    },
+    {
+      label: "🧭 Ukuran Papan",
+      value: `${boardSize} × ${boardSize}`
+    }
+  ];
+  metrics.forEach((metric) => {
+    const item = document.createElement("li");
+    const label = document.createElement("span");
+    label.className = "metric-label";
+    label.textContent = metric.label;
+    const value = document.createElement("strong");
+    value.textContent = metric.value;
+    item.append(label, value);
+    metricsList.append(item);
+  });
+
+  const objectivesHeading = document.createElement("p");
+  objectivesHeading.className = "level-detail-objectives-heading";
+  objectivesHeading.textContent = "Tujuan Level";
+
+  const objectivesList = document.createElement("ul");
+  objectivesList.className = "level-detail-objectives";
+  const objectives: string[] = [];
+  if (hasJelly) {
+    const jellyLabel = `🍮 Bersihkan ${jellyCells.toLocaleString("id-ID")} tile jelly.`;
+    objectives.push(jellyLabel);
+  }
+  if (hasCrate) {
+    const crateLabel = `📦 Hancurkan ${crateCells.toLocaleString("id-ID")} peti yang menghalangi.`;
+    objectives.push(crateLabel);
+  }
+  objectives.push("⭐ Capai target skor yang ditentukan.");
+
+  objectives.forEach((objective) => {
+    const item = document.createElement("li");
+    item.textContent = objective;
+    objectivesList.append(item);
+  });
+
+  const progressBlock = document.createElement("div");
+  progressBlock.className = "level-detail-progress";
+
+  const progressTitle = document.createElement("h4");
+  progressTitle.className = "level-detail-progress-title";
+  progressTitle.textContent = "Rekor Permainan";
+  progressBlock.append(progressTitle);
+
+  const progressList = document.createElement("ul");
+  progressList.className = "level-detail-progress-list";
+  const bestStars = progress?.bestStars ?? 0;
+  const bestScore = progress?.bestScore ?? 0;
+  const bestCombo = progress?.bestCombo ?? 0;
+  const bestEfficiency = progress?.bestEfficiency ?? 0;
+
+  if (bestStars > 0 || bestScore > 0 || bestCombo > 0 || bestEfficiency > 0) {
+    const starItem = document.createElement("li");
+    starItem.textContent = `⭐ Bintang terbaik: ${renderStars(bestStars)}`;
+    progressList.append(starItem);
+
+    if (bestScore > 0) {
+      const scoreItem = document.createElement("li");
+      scoreItem.textContent = `🏆 Skor terbaik: ${bestScore.toLocaleString("id-ID")}`;
+      progressList.append(scoreItem);
     }
 
-    const title = document.createElement("strong");
-    title.textContent = `Level ${level.id}`;
-    const subtitle = document.createElement("span");
-    subtitle.className = "menu-level-subtitle";
-    const contents: HTMLElement[] = [title, subtitle];
-    if (unlocked) {
-      subtitle.textContent = level.name;
-      const bestScore = progress?.bestScore ?? 0;
-      button.title = bestScore > 0
-        ? `Skor terbaik: ${bestScore.toLocaleString("id-ID")}`
-        : "Belum ada skor terbaik.";
-      const bestStars = progress?.bestStars ?? 0;
-      if (bestStars > 0) {
-        const stars = document.createElement("span");
-        stars.className = "menu-level-stars";
-        stars.textContent = renderStars(bestStars);
-        contents.push(stars);
-      }
+    if (bestCombo > 0) {
+      const comboItem = document.createElement("li");
+      comboItem.textContent = `⚡ Combo terbaik: ${bestCombo}`;
+      progressList.append(comboItem);
+    }
 
-      const bestCombo = progress?.bestCombo ?? 0;
-      const bestEfficiency = progress?.bestEfficiency ?? 0;
-      if (bestCombo > 0 || bestEfficiency > 0) {
-        const metrics = document.createElement("span");
-        metrics.className = "menu-level-metric";
-        const comboLabel = bestCombo > 0 ? bestCombo.toString() : "-";
-        const efficiencyLabel = bestEfficiency > 0 ? bestEfficiency.toFixed(2) : "-";
-        metrics.textContent = `⚡ Combo: ${comboLabel} • 🎯 Skor/Langkah: ${efficiencyLabel}`;
-        contents.push(metrics);
-      }
+    if (bestEfficiency > 0) {
+      const efficiencyItem = document.createElement("li");
+      efficiencyItem.textContent = `🎯 Skor/Langkah terbaik: ${bestEfficiency.toFixed(2)}`;
+      progressList.append(efficiencyItem);
+    }
 
+    const lastScore = progress?.lastScore ?? 0;
+    if (lastScore > 0) {
       const lastCombo = progress?.lastCombo ?? 0;
       const lastEfficiency = progress?.lastEfficiency ?? 0;
-      if (lastCombo > 0 || lastEfficiency > 0) {
-        const recent = document.createElement("span");
-        recent.className = "menu-level-metric secondary";
-        const lastComboLabel = lastCombo > 0 ? lastCombo.toString() : "-";
-        const lastEfficiencyLabel = lastEfficiency > 0 ? lastEfficiency.toFixed(2) : "-";
-        recent.textContent = `⌛ Terakhir: Combo ${lastComboLabel} • Skor/Langkah ${lastEfficiencyLabel}`;
-        contents.push(recent);
-      }
-    } else {
-      button.title = "Selesaikan level sebelumnya untuk membuka.";
-      const requiredLevel = LEVELS[index - 1];
-      subtitle.textContent = requiredLevel
-        ? `Terkunci • Selesaikan Level ${requiredLevel.id}`
-        : "Terkunci";
-      subtitle.classList.add("menu-level-locked");
+      const lastItem = document.createElement("li");
+      const lastComboLabel = lastCombo > 0 ? lastCombo.toString() : "-";
+      const lastEfficiencyLabel = lastEfficiency > 0 ? lastEfficiency.toFixed(2) : "-";
+      lastItem.textContent = `⌛ Terakhir • Skor: ${lastScore.toLocaleString("id-ID")} • Combo: ${lastComboLabel} • Skor/Langkah: ${lastEfficiencyLabel}`;
+      progressList.append(lastItem);
     }
 
-    if (unlocked) {
-      button.addEventListener("click", () => {
-        loadLevel(index, {
-          showTutorial: index === 0 && !tutorialSeen,
-          message: level.description ?? "Selamat bermain."
-        });
-        enterGame();
-      });
-    }
-
-    button.append(...contents);
-    menuLevelsList.append(button);
+    progressBlock.append(progressList);
+  } else {
+    const emptyState = document.createElement("p");
+    emptyState.className = "level-detail-progress-empty";
+    emptyState.textContent =
+      "Belum ada catatan. Mainkan level ini untuk mengumpulkan bintang dan skor.";
+    progressBlock.append(emptyState);
   }
+
+  const actions = document.createElement("div");
+  actions.className = "level-detail-actions";
+
+  const playButton = document.createElement("button");
+  playButton.className = "primary";
+  playButton.textContent = isCurrentLevel ? "Lanjutkan Level Ini" : "Mainkan Level Ini";
+  playButton.disabled = !unlocked;
+  playButton.addEventListener("click", () => {
+    startSelectedLevel();
+  });
+  actions.append(playButton);
+
+  if (isCurrentLevel) {
+    const restartLevelButton = document.createElement("button");
+    restartLevelButton.className = "ghost";
+    restartLevelButton.textContent = "Mulai Ulang Level";
+    restartLevelButton.addEventListener("click", () => {
+      registerPlayerAction();
+      loadLevel(menuSelectedLevelIndex, {
+        showTutorial: menuSelectedLevelIndex === 0 && !tutorialSeen,
+        message: "Level dimulai ulang."
+      });
+      enterGame();
+    });
+    actions.append(restartLevelButton);
+  } else if (!unlocked) {
+    const lockedNote = document.createElement("p");
+    lockedNote.className = "menu-level-detail-locked-note";
+    const requirement = LEVELS[menuSelectedLevelIndex - 1];
+    lockedNote.textContent = requirement
+      ? `Butuh menyelesaikan Level ${requirement.id} terlebih dahulu.`
+      : "Level ini belum tersedia.";
+    actions.append(lockedNote);
+  }
+
+  menuLevelsList.append(
+    header,
+    description,
+    metricsList,
+    objectivesHeading,
+    objectivesList,
+    progressBlock,
+    actions
+  );
+}
+
+function selectMenuLevel(index: number): void {
+  if (index < 0 || index >= LEVELS.length) {
+    return;
+  }
+  const level = LEVELS[index];
+  const progress = profileState.levelProgress[level.id];
+  if (!progress?.unlocked) {
+    return;
+  }
+
+  menuSelectedLevelIndex = index;
+  registerPlayerAction();
+  updateMenuView();
+}
+
+function startSelectedLevel(): void {
+  const index = menuSelectedLevelIndex;
+  if (index < 0 || index >= LEVELS.length) {
+    return;
+  }
+  const level = LEVELS[index];
+  const progress = profileState.levelProgress[level.id];
+  if (!progress?.unlocked) {
+    return;
+  }
+
+  registerPlayerAction();
+
+  if (index === currentLevelIndex) {
+    enterGame();
+    return;
+  }
+
+  loadLevel(index, {
+    showTutorial: index === 0 && !tutorialSeen,
+    message: level.description ?? "Selamat bermain."
+  });
+  enterGame();
+}
+
+function countActiveCells(layout?: number[][]): number {
+  if (!layout) {
+    return 0;
+  }
+  return layout.reduce((total, row) => {
+    return (
+      total +
+      row.reduce((rowTotal, value) => {
+        const numeric = Number(value ?? 0);
+        return rowTotal + (Number.isFinite(numeric) && numeric > 0 ? 1 : 0);
+      }, 0)
+    );
+  }, 0);
 }
 
 function renderLevelMap(): void {
@@ -657,11 +846,15 @@ function renderLevelMap(): void {
     const unlocked = progress?.unlocked ?? false;
     const completed = (progress?.bestStars ?? 0) > 0;
     const alignment = index % 2 === 0 ? "left" : "right";
+    const isSelected = index === menuSelectedLevelIndex;
 
     const row = document.createElement("div");
     row.className = "menu-map-row";
     if (index < totalLevels - 1) {
       row.classList.add("has-next");
+    }
+    if (isSelected) {
+      row.classList.add("selected");
     }
     row.dataset.align = alignment;
     const offsetValue = alignment === "left" ? "-80px" : alignment === "right" ? "80px" : "0px";
@@ -670,6 +863,7 @@ function renderLevelMap(): void {
     const nodeButton = document.createElement("button");
     nodeButton.className = "map-node";
     nodeButton.type = "button";
+    nodeButton.setAttribute("aria-pressed", isSelected ? "true" : "false");
     nodeButton.disabled = !unlocked;
     if (!unlocked) {
       nodeButton.classList.add("locked");
@@ -682,6 +876,9 @@ function renderLevelMap(): void {
     }
     if (index === currentLevelIndex) {
       nodeButton.classList.add("current");
+    }
+    if (isSelected) {
+      nodeButton.classList.add("selected");
     }
 
     const levelBadge = document.createElement("span");
@@ -696,13 +893,19 @@ function renderLevelMap(): void {
     nodeButton.append(levelBadge, starLabel);
 
     if (unlocked) {
-      nodeButton.title = `Level ${level.id} – ${level.name}`;
+      nodeButton.title = `Klik untuk melihat detail Level ${level.id}`;
       nodeButton.addEventListener("click", () => {
-        loadLevel(index, {
-          showTutorial: index === 0 && !tutorialSeen,
-          message: level.description ?? "Selamat bermain."
-        });
-        enterGame();
+        selectMenuLevel(index);
+      });
+      nodeButton.addEventListener("dblclick", () => {
+        menuSelectedLevelIndex = index;
+        startSelectedLevel();
+      });
+      nodeButton.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectMenuLevel(index);
+        }
       });
     } else {
       nodeButton.title = "Terkunci. Selesaikan level sebelumnya.";
@@ -711,6 +914,9 @@ function renderLevelMap(): void {
     const label = document.createElement("span");
     label.className = "map-node-label";
     label.textContent = level.name;
+    if (isSelected) {
+      label.classList.add("selected");
+    }
 
     row.append(nodeButton, label);
     menuMapPath.append(row);
@@ -718,13 +924,15 @@ function renderLevelMap(): void {
 
   if (currentView === "menu") {
     window.requestAnimationFrame(() => {
-      const currentNode = menuMapPath.querySelector<HTMLButtonElement>(".map-node.current");
-      if (!currentNode) {
+      const targetNode =
+        menuMapPath.querySelector<HTMLButtonElement>(".map-node.selected") ??
+        menuMapPath.querySelector<HTMLButtonElement>(".map-node.current");
+      if (!targetNode) {
         return;
       }
       const container = menuMapScroll;
       const targetTop =
-        currentNode.offsetTop - container.clientHeight / 2 + currentNode.offsetHeight / 2;
+        targetNode.offsetTop - container.clientHeight / 2 + targetNode.offsetHeight / 2;
       container.scrollTo({
         top: Math.max(targetTop, 0),
         behavior: "smooth"

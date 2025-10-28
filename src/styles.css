@@ -156,46 +156,165 @@ body::after {
   color: rgba(226, 232, 240, 0.88);
 }
 
-.menu-level-list {
+.menu-level-detail {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 12px;
+  gap: 16px;
+  align-content: start;
+  padding: 20px;
+  border-radius: 24px;
+  background: linear-gradient(
+      160deg,
+      rgba(15, 23, 42, 0.72),
+      rgba(30, 64, 175, 0.54) 35%,
+      rgba(59, 130, 246, 0.28)
+    ),
+    radial-gradient(circle at 18% 12%, rgba(236, 72, 153, 0.18), transparent 60%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 18px 36px rgba(15, 23, 42, 0.38);
+  min-height: clamp(260px, 45vh, 420px);
 }
 
-.menu-level-button {
-  padding: 14px 16px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #e2e8f0;
-  font-weight: 600;
-  cursor: pointer;
-  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
-  text-align: left;
+.level-detail-header {
   display: grid;
   gap: 4px;
 }
 
-.menu-level-button:hover {
-  transform: translateY(-2px);
-  background: rgba(59, 130, 246, 0.16);
-  border-color: rgba(59, 130, 246, 0.35);
+.level-detail-badge {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(244, 240, 255, 0.78);
 }
 
-.menu-level-button.current {
-  background: linear-gradient(135deg, rgba(249, 115, 22, 0.25), rgba(236, 72, 153, 0.25));
-  border-color: rgba(236, 72, 153, 0.4);
-}
-
-.menu-level-button.locked {
-  opacity: 0.5;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-.menu-level-button strong {
-  font-size: 16px;
+.level-detail-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
   color: #f8fafc;
+}
+
+.level-detail-description {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(226, 232, 240, 0.82);
+}
+
+.menu-level-detail-locked-note {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(148, 163, 184, 0.85);
+  text-align: center;
+  width: 100%;
+}
+
+.level-detail-metrics {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.level-detail-metrics li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.86);
+}
+
+.level-detail-metrics li strong {
+  font-size: 15px;
+  color: #f8fafc;
+}
+
+.level-detail-metrics .metric-label {
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: rgba(241, 245, 249, 0.9);
+}
+
+.level-detail-objectives-heading {
+  margin: 4px 0 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(226, 232, 240, 0.7);
+}
+
+.level-detail-objectives {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.level-detail-objectives li {
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.82);
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.level-detail-progress {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.58);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.level-detail-progress-title {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(148, 163, 184, 0.86);
+}
+
+.level-detail-progress-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.level-detail-progress-list li {
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.8);
+}
+
+.level-detail-progress-empty {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.65);
+}
+
+.level-detail-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.level-detail-actions button {
+  flex: 1 1 140px;
+}
+
+.level-detail-actions .ghost {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(248, 250, 252, 0.86);
 }
 
 .menu-levels-content {
@@ -355,6 +474,16 @@ body::after {
   box-shadow: 0 24px 40px rgba(245, 158, 11, 0.45);
 }
 
+.map-node.selected::before {
+  opacity: 1;
+}
+
+.map-node.selected:not(.current) {
+  border-color: rgba(59, 130, 246, 0.88);
+  background: radial-gradient(circle at 30% 30%, rgba(191, 219, 254, 0.95), rgba(59, 130, 246, 0.9));
+  box-shadow: 0 24px 40px rgba(59, 130, 246, 0.45);
+}
+
 .map-node.completed {
   border-color: rgba(16, 185, 129, 0.75);
   background: radial-gradient(circle at 30% 30%, rgba(134, 239, 172, 0.95), rgba(59, 130, 246, 0.88));
@@ -401,6 +530,12 @@ body::after {
   box-shadow: 0 10px 20px rgba(15, 23, 42, 0.3);
 }
 
+.map-node-label.selected {
+  background: rgba(59, 130, 246, 0.55);
+  color: #f8fafc;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
 @media (max-width: 640px) {
   .map-node {
     width: 80px;
@@ -417,29 +552,6 @@ body::after {
   }
 }
 
-.menu-level-button .menu-level-subtitle {
-  font-size: 12px;
-  color: rgba(226, 232, 240, 0.76);
-}
-
-.menu-level-button .menu-level-locked {
-  color: rgba(148, 163, 184, 0.8);
-}
-
-.menu-level-button .menu-level-stars {
-  font-size: 12px;
-  color: #facc15;
-  letter-spacing: 3px;
-}
-
-.menu-level-button .menu-level-metric {
-  font-size: 11px;
-  color: rgba(226, 232, 240, 0.62);
-}
-
-.menu-level-button .menu-level-metric.secondary {
-  color: rgba(226, 232, 240, 0.48);
-}
 
 .menu-mission-summary {
   font-size: 14px;
