@@ -15,7 +15,7 @@ export interface Position {
   col: number;
 }
 
-export type SpecialType = "line-row" | "line-col" | "bomb" | "block";
+export type SpecialType = "line-row" | "line-col" | "bomb" | "block" | "color";
 
 export interface Tile {
   id: number;
@@ -50,6 +50,10 @@ export interface SwapResult extends ResolveResult {
   frames: SwapFrame[];
 }
 
+export interface ManualActionResult extends ResolveResult {
+  frames: SwapFrame[];
+}
+
 export type FrameType = "match" | "cascade" | "special" | "final";
 
 export interface SwapFrame {
@@ -59,6 +63,12 @@ export interface SwapFrame {
   scoreGain: number;
   createdSpecials: SpecialCreation[];
   type: FrameType;
+}
+
+export interface HintMove {
+  primary: Position;
+  secondary: Position;
+  matches: Position[];
 }
 
 type MatchOrientation = "horizontal" | "vertical" | "mixed" | "square";
@@ -331,6 +341,42 @@ function positionKey(position: Position): string {
   return `${position.row},${position.col}`;
 }
 
+function collectEntireBoard(board: Board, accumulator: Map<string, Position>): void {
+  for (let row = 0; row < board.length; row++) {
+    for (let col = 0; col < board[row].length; col++) {
+      if (board[row][col]) {
+        const pos = { row, col };
+        accumulator.set(positionKey(pos), pos);
+      }
+    }
+  }
+}
+
+function applyColorBombEffect(
+  board: Board,
+  origin: Position,
+  targetKind: TileKind | null,
+  accumulator: Map<string, Position>
+): void {
+  const originKey = positionKey(origin);
+  accumulator.set(originKey, origin);
+
+  if (!targetKind) {
+    collectEntireBoard(board, accumulator);
+    return;
+  }
+
+  for (let row = 0; row < board.length; row++) {
+    for (let col = 0; col < board[row].length; col++) {
+      const tile = board[row][col];
+      if (tile && tile.kind === targetKind) {
+        const pos = { row, col };
+        accumulator.set(positionKey(pos), pos);
+      }
+    }
+  }
+}
+
 function clearMatches(
   board: Board,
   matches: MatchGroup[],
@@ -398,8 +444,10 @@ function determineSpecialCreation(
   let special: SpecialType;
   if (group.orientation === "square") {
     special = "block";
-  } else if (length >= 5 || group.orientation === "mixed") {
+  } else if (group.orientation === "mixed") {
     special = "bomb";
+  } else if (length >= 5) {
+    special = "color";
   } else if (group.orientation === "horizontal") {
     special = "line-row";
   } else {
@@ -476,6 +524,13 @@ function applySpecialEffect(
     return;
   }
 
+  if (special === "color") {
+    const tile = board[origin.row]?.[origin.col] ?? null;
+    const targetKind = tile?.kind ?? null;
+    applyColorBombEffect(board, origin, targetKind, accumulator);
+    return;
+  }
+
   // bomb clears surrounding 3x3 area including self
   for (let dr = -1; dr <= 1; dr++) {
     for (let dc = -1; dc <= 1; dc++) {
@@ -545,27 +600,44 @@ function triggerSpecialCombo(board: Board, a: Position, b: Position): SpecialCom
   const before = cloneBoard(board);
   const accumulator = new Map<string, Position>();
 
-  const addEntireBoard = () => {
-    for (let row = 0; row < board.length; row++) {
-      for (let col = 0; col < board[row].length; col++) {
-        if (board[row][col]) {
-          const pos = { row, col };
-          accumulator.set(positionKey(pos), pos);
-        }
-      }
-    }
-  };
-
   if (specials.length === 2) {
     const [first, second] = specials;
     const firstSpecial = board[first.position.row]?.[first.position.col]?.special;
     const secondSpecial = board[second.position.row]?.[second.position.col]?.special;
+    const involvesColor = firstSpecial === "color" || secondSpecial === "color";
 
-    if (
+    if (involvesColor) {
+      if (firstSpecial === "color" && secondSpecial === "color") {
+        collectEntireBoard(board, accumulator);
+      } else {
+        const colorEntry = firstSpecial === "color" ? first : second;
+        const otherEntry = colorEntry === first ? second : first;
+        const otherTile = board[otherEntry.position.row]?.[otherEntry.position.col] ?? null;
+        const targetKind = otherTile?.kind ?? null;
+
+        applyColorBombEffect(board, colorEntry.position, targetKind, accumulator);
+
+        if (otherTile?.special) {
+          accumulator.set(positionKey(otherEntry.position), otherEntry.position);
+          if (targetKind) {
+            for (let row = 0; row < board.length; row++) {
+              for (let col = 0; col < board[row].length; col++) {
+                const tile = board[row][col];
+                if (tile && tile.kind === targetKind) {
+                  applySpecialEffect(board, { row, col }, otherTile.special, accumulator);
+                }
+              }
+            }
+          } else {
+            applySpecialEffect(board, otherEntry.position, otherTile.special, accumulator);
+          }
+        }
+      }
+    } else if (
       (firstSpecial === "bomb" && secondSpecial === "bomb") ||
       (firstSpecial === "block" && secondSpecial === "block")
     ) {
-      addEntireBoard();
+      collectEntireBoard(board, accumulator);
     } else {
       for (const entry of specials) {
         const posKey = positionKey(entry.position);
@@ -591,9 +663,17 @@ function triggerSpecialCombo(board: Board, a: Position, b: Position): SpecialCom
     }
   } else {
     const only = specials[0];
-    const key = positionKey(only.position);
-    accumulator.set(key, only.position);
-    applySpecialEffect(board, only.position, only.special, accumulator);
+    if (only.special === "color") {
+      const sameAsA = only.position.row === a.row && only.position.col === a.col;
+      const otherPos = sameAsA ? b : a;
+      const otherTile = board[otherPos.row]?.[otherPos.col] ?? null;
+      const targetKind = otherTile?.kind ?? null;
+      applyColorBombEffect(board, only.position, targetKind, accumulator);
+    } else {
+      const key = positionKey(only.position);
+      accumulator.set(key, only.position);
+      applySpecialEffect(board, only.position, only.special, accumulator);
+    }
   }
 
   expandSpecialChain(board, accumulator);
@@ -706,6 +786,60 @@ export function hasValidMoves(board: Board): boolean {
   return false;
 }
 
+export function findHintMove(board: Board): HintMove | null {
+  const size = board.length;
+  for (let row = 0; row < size; row++) {
+    for (let col = 0; col < size; col++) {
+      const current: Position = { row, col };
+      const right: Position = { row, col: col + 1 };
+      const down: Position = { row: row + 1, col };
+
+      if (inBounds(board, right)) {
+        const hint = evaluateHintMove(board, current, right);
+        if (hint) {
+          return hint;
+        }
+      }
+
+      if (inBounds(board, down)) {
+        const hint = evaluateHintMove(board, current, down);
+        if (hint) {
+          return hint;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function evaluateHintMove(board: Board, a: Position, b: Position): HintMove | null {
+  const testBoard = cloneBoard(board);
+  swapTiles(testBoard, a, b);
+  const matches = findMatches(testBoard);
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const involvesSwap = (positions: Position[]): boolean =>
+    positions.some((pos) => (pos.row === a.row && pos.col === a.col) || (pos.row === b.row && pos.col === b.col));
+
+  const relevantMatches = matches.filter((group) => involvesSwap(group.positions));
+  const targetMatches = relevantMatches.length > 0 ? relevantMatches : matches;
+  const uniquePositions = new Map<string, Position>();
+
+  for (const group of targetMatches) {
+    for (const pos of group.positions) {
+      uniquePositions.set(positionKey(pos), pos);
+    }
+  }
+
+  return {
+    primary: a,
+    secondary: b,
+    matches: Array.from(uniquePositions.values())
+  };
+}
+
 function wouldFormMatch(board: Board, a: Position, b: Position): boolean {
   if (!inBounds(board, a) || !inBounds(board, b)) {
     return false;
@@ -722,7 +856,11 @@ function swapTiles(board: Board, a: Position, b: Position): void {
   board[b.row][b.col] = temp;
 }
 
-export function attemptSwap(board: Board, a: Position, b: Position): SwapResult {
+interface SwapExecutionOptions {
+  requireMatch: boolean;
+}
+
+function executeSwap(board: Board, a: Position, b: Position, options: SwapExecutionOptions): SwapResult {
   if (!inBounds(board, a) || !inBounds(board, b)) {
     return {
       valid: false,
@@ -751,7 +889,7 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
   const comboResult = triggerSpecialCombo(workingBoard, a, b);
   let matches = findMatches(workingBoard);
 
-  if (!comboResult && matches.length === 0) {
+  if (!comboResult && matches.length === 0 && options.requireMatch) {
     return {
       valid: false,
       reason: "no-match",
@@ -846,9 +984,11 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
     cascadeIndex++;
   }
 
-  const ensuredBoard = ensurePlayableBoard(currentBoard);
-  if (ensuredBoard !== currentBoard) {
-    currentBoard = ensuredBoard;
+  if (totalRemoved > 0) {
+    const ensuredBoard = ensurePlayableBoard(currentBoard);
+    if (ensuredBoard !== currentBoard) {
+      currentBoard = ensuredBoard;
+    }
   }
 
   // Apply working board back to original
@@ -861,14 +1001,173 @@ export function attemptSwap(board: Board, a: Position, b: Position): SwapResult 
   frames.push({
     board: cloneBoard(board),
     removed: [],
-    cascadeIndex: cascadeIndex - 1,
+    cascadeIndex: Math.max(1, cascadeIndex - 1),
+    scoreGain: 0,
+    createdSpecials: [],
+    type: "final"
+  });
+
+  const producedClear = totalRemoved > 0;
+  return {
+    valid: options.requireMatch ? producedClear : true,
+    reason: producedClear ? undefined : "no-match",
+    cascades,
+    totalRemoved,
+    totalScore,
+    frames
+  };
+}
+
+export function attemptSwap(board: Board, a: Position, b: Position): SwapResult {
+  return executeSwap(board, a, b, { requireMatch: true });
+}
+
+export function forceSwap(board: Board, a: Position, b: Position): SwapResult {
+  return executeSwap(board, a, b, { requireMatch: false });
+}
+
+export function hammerTile(board: Board, position: Position): ManualActionResult | null {
+  if (!inBounds(board, position)) {
+    return null;
+  }
+
+  const existing = board[position.row]?.[position.col];
+  if (!existing) {
+    return null;
+  }
+
+  let workingBoard = cloneBoard(board);
+  const targetTile = workingBoard[position.row]?.[position.col];
+  if (!targetTile) {
+    return null;
+  }
+
+  const accumulator = new Map<string, Position>();
+  const origin = { row: position.row, col: position.col };
+  accumulator.set(positionKey(origin), origin);
+
+  if (targetTile.special) {
+    applySpecialEffect(workingBoard, origin, targetTile.special, accumulator);
+    expandSpecialChain(workingBoard, accumulator);
+  }
+
+  const removalTargets = Array.from(accumulator.values()).filter((pos) => {
+    const tile = workingBoard[pos.row]?.[pos.col];
+    return !!tile;
+  });
+
+  if (removalTargets.length === 0) {
+    return null;
+  }
+
+  const beforeBoard = cloneBoard(workingBoard);
+
+  for (const { row, col } of removalTargets) {
+    workingBoard[row][col] = null;
+  }
+
+  const cascades: CascadeDetail[] = [];
+  const frames: SwapFrame[] = [];
+  let totalRemoved = removalTargets.length;
+  let totalScore = 0;
+  let cascadeIndex = 1;
+
+  const initialScore = Math.round(removalTargets.length * BASE_MATCH_SCORE * cascadeIndex);
+  totalScore += initialScore;
+
+  cascades.push({
+    removed: removalTargets,
+    scoreGain: initialScore,
+    createdSpecials: []
+  });
+
+  frames.push({
+    board: beforeBoard,
+    removed: removalTargets,
+    cascadeIndex,
+    scoreGain: initialScore,
+    createdSpecials: [],
+    type: "special"
+  });
+
+  collapseColumns(workingBoard);
+  refillBoard(workingBoard);
+
+  frames.push({
+    board: cloneBoard(workingBoard),
+    removed: [],
+    cascadeIndex,
+    scoreGain: initialScore,
+    createdSpecials: [],
+    type: "cascade"
+  });
+
+  let currentBoard = workingBoard;
+  let currentMatches = findMatches(currentBoard);
+  cascadeIndex++;
+
+  while (currentMatches.length > 0) {
+    const preClearBoard = cloneBoard(currentBoard);
+    const cleared = clearMatches(currentBoard, currentMatches);
+    const removalCount = cleared.removed.length + cleared.createdSpecials.length;
+    totalRemoved += removalCount;
+    const scoreGain = Math.round(removalCount * BASE_MATCH_SCORE * cascadeIndex);
+    totalScore += scoreGain;
+
+    cascades.push({
+      removed: cleared.removed,
+      scoreGain,
+      createdSpecials: cleared.createdSpecials
+    });
+
+    frames.push({
+      board: preClearBoard,
+      removed: cleared.removed,
+      cascadeIndex,
+      scoreGain,
+      createdSpecials: cleared.createdSpecials,
+      type: "match"
+    });
+
+    collapseColumns(currentBoard);
+    refillBoard(currentBoard);
+
+    frames.push({
+      board: cloneBoard(currentBoard),
+      removed: [],
+      cascadeIndex,
+      scoreGain,
+      createdSpecials: [],
+      type: "cascade"
+    });
+
+    currentMatches = findMatches(currentBoard);
+    cascadeIndex++;
+  }
+
+  if (totalRemoved > 0) {
+    const ensuredBoard = ensurePlayableBoard(currentBoard);
+    if (ensuredBoard !== currentBoard) {
+      currentBoard = ensuredBoard;
+    }
+  }
+
+  for (let row = 0; row < board.length; row++) {
+    for (let col = 0; col < board[row].length; col++) {
+      board[row][col] = currentBoard[row][col];
+    }
+  }
+
+  frames.push({
+    board: cloneBoard(board),
+    removed: [],
+    cascadeIndex: Math.max(1, cascadeIndex - 1),
     scoreGain: 0,
     createdSpecials: [],
     type: "final"
   });
 
   return {
-    valid: true,
     cascades,
     totalRemoved,
     totalScore,

@@ -4,9 +4,11 @@ import {
   Tile,
   TileKind,
   SwapFrame,
-  SpecialType
+  SpecialType,
+  HintMove,
+  findHintMove
 } from "./board";
-import { Game, GameStatus, SwapFeedback } from "./game";
+import { Game, GameStatus, SwapFeedback, BoosterType, SwapFailureReason } from "./game";
 import { LEVELS } from "./levels";
 import {
   BASE_MISSIONS,
@@ -48,6 +50,11 @@ interface RenderOptions {
   highlightType?: "match" | "cascade" | "special";
   disableInput?: boolean;
   selected?: Position | null;
+  hintSwap?: [Position, Position];
+  hintMatch?: Position[];
+  boosterMode?: BoosterType | null;
+  boosterSelection?: Position | null;
+  boosterTargets?: Position[];
 }
 
 const FRAME_DURATION: Record<SwapFrame["type"], number> = {
@@ -69,6 +76,7 @@ const DRAG_THRESHOLD_PX = 10;
 const MAX_DRAG_OFFSET_PX = 28;
 const SWAP_ANIMATION_DURATION = 160;
 const SUMMARY_ANIMATION_DURATION = 260;
+const HINT_DELAY_MS = 7000;
 
 const TILE_THEME: Record<TileKind, TileTheme> = {
   berry: {
@@ -113,7 +121,24 @@ const SPECIAL_ICON: Record<SpecialType, string> = {
   "line-row": "➡️",
   "line-col": "⬇️",
   bomb: "💣",
-  block: "🧊"
+  block: "🧊",
+  color: "🌈"
+};
+
+const BOOSTER_INFO: Record<
+  BoosterType,
+  { icon: string; label: string; description: string }
+> = {
+  hammer: {
+    icon: "🔨",
+    label: "Lollipop Hammer",
+    description: "Hancurkan satu tile apa pun secara instan."
+  },
+  "free-switch": {
+    icon: "🔁",
+    label: "Free Switch",
+    description: "Tukar dua tile bertetangga tanpa mengurangi langkah."
+  }
 };
 
 const MISSION_STORAGE_KEY = "crush-rush-missions";
@@ -154,6 +179,15 @@ const summaryDismiss = document.createElement("button");
 const summaryConfetti = document.createElement("div");
 const missionToast = document.createElement("div");
 const missionToastList = document.createElement("ul");
+const boosterBar = document.createElement("div");
+const boosterCounts: Record<BoosterType, HTMLSpanElement> = {
+  hammer: document.createElement("span"),
+  "free-switch": document.createElement("span")
+};
+const boosterButtons: Record<BoosterType, HTMLButtonElement> = {
+  hammer: createBoosterButton("hammer", boosterCounts.hammer),
+  "free-switch": createBoosterButton("free-switch", boosterCounts["free-switch"])
+};
 const menuButton = document.createElement("button");
 const playArea = document.createElement("div");
 const missionPanel = document.createElement("div");
@@ -217,6 +251,10 @@ let summaryVisible = false;
 let summaryHideTimer: number | null = null;
 let confettiCleanupTimer: number | null = null;
 let missionToastTimer: number | null = null;
+let hintTimerId: number | null = null;
+let hintSuggestion: HintMove | null = null;
+let activeBooster: BoosterType | null = null;
+let boosterSelection: Position | null = null;
 
 shell.className = "game-shell";
 backgroundLayer.className = "background-layer";
@@ -251,6 +289,8 @@ summaryBanner.append(summaryConfetti, summaryTitle, summaryBody, summaryHighligh
 missionToast.className = "mission-toast hidden";
 missionToastList.className = "mission-toast-list";
 missionToast.append(missionToastList);
+boosterBar.className = "booster-bar";
+boosterBar.append(boosterButtons.hammer, boosterButtons["free-switch"]);
 tutorialOverlay.className = "tutorial-overlay";
 tutorialOverlay.innerHTML = `
   <div>
@@ -316,6 +356,7 @@ menuActions.append(menuStartButton, menuContinueButton);
 mainMenu.append(menuHeader, menuStats, menuLevelsSection, menuMissionSummary, menuActions, menuFooterHint);
 
 tutorialOverlay.addEventListener("click", () => {
+  registerPlayerAction();
   tutorialActive = false;
   tutorialSeen = true;
   infoMessage = "Pilih dua permen bertetangga untuk ditukar.";
@@ -323,9 +364,13 @@ tutorialOverlay.addEventListener("click", () => {
 });
 
 restartButton.addEventListener("click", () => {
+  registerPlayerAction();
+  resetHintSystem();
   cancelPlayback();
   game.reset();
   selected = null;
+  activeBooster = null;
+  boosterSelection = null;
   isAnimating = false;
   tutorialActive = currentLevelIndex === 0 && !tutorialSeen;
   infoMessage = tutorialActive
@@ -341,6 +386,7 @@ restartButton.addEventListener("click", () => {
 });
 
 nextButton.addEventListener("click", () => {
+  registerPlayerAction();
   if (!hasNextLevel()) {
     return;
   }
@@ -351,6 +397,7 @@ nextButton.addEventListener("click", () => {
 });
 
 retryButton.addEventListener("click", () => {
+  registerPlayerAction();
   loadLevel(currentLevelIndex, {
     message: "Coba lagi. Pelajari pola cascade!",
     showTutorial: false
@@ -358,6 +405,7 @@ retryButton.addEventListener("click", () => {
 });
 
 menuStartButton.addEventListener("click", () => {
+  registerPlayerAction();
   loadLevel(0, {
     message: "Level pertama dimulai. Bentuk combo terbaikmu!",
     showTutorial: !tutorialSeen
@@ -366,18 +414,21 @@ menuStartButton.addEventListener("click", () => {
 });
 
 menuContinueButton.addEventListener("click", () => {
+  registerPlayerAction();
   enterGame();
 });
 
 menuButton.addEventListener("click", () => {
+  registerPlayerAction();
   showMenu();
 });
 
 summaryDismiss.addEventListener("click", () => {
+  registerPlayerAction();
   hideSessionSummary();
 });
 
-bottomBar.append(restartButton, menuButton);
+bottomBar.append(restartButton, boosterBar, menuButton);
 shell.append(headerBar, hud, playArea, infoBanner, stateBanner, bottomBar, tutorialOverlay);
 shell.prepend(backgroundLayer);
 backgroundLayer.append(backgroundParticles);
@@ -419,10 +470,13 @@ function loadLevel(index: number, options?: { showTutorial?: boolean; message?: 
   }
 
   cancelPlayback();
+  resetHintSystem();
   currentLevelIndex = index;
   const level = LEVELS[currentLevelIndex];
   game.setLevel(level);
   selected = null;
+  activeBooster = null;
+  boosterSelection = null;
   isAnimating = false;
   lastKnownStatus = game.getStatus();
 
@@ -451,9 +505,12 @@ function enterGame(): void {
     return;
   }
 
+  resetHintSystem();
   currentView = "game";
   mainMenu.classList.add("hidden");
   shell.classList.remove("hidden");
+  activeBooster = null;
+  boosterSelection = null;
   render();
   renderMissionPanel();
 }
@@ -464,9 +521,12 @@ function showMenu(): void {
   resetBoardAnimations();
   suppressNextClick = false;
   swapInProgress = false;
+  activeBooster = null;
+  boosterSelection = null;
   currentView = "menu";
   shell.classList.add("hidden");
   mainMenu.classList.remove("hidden");
+  resetHintSystem();
   hideSessionSummary();
   updateMenuView();
 }
@@ -958,9 +1018,132 @@ function hideMissionToast(): void {
   }, SUMMARY_ANIMATION_DURATION);
 }
 
+function shouldAllowHint(): boolean {
+  if (currentView !== "game") {
+    return false;
+  }
+  if (tutorialActive) {
+    return false;
+  }
+  if (game.getStatus() !== "playing") {
+    return false;
+  }
+  if (swapInProgress || isAnimating || playback) {
+    return false;
+  }
+  if (dragState) {
+    return false;
+  }
+  return true;
+}
+
+function clearHintTimer(): void {
+  if (hintTimerId !== null) {
+    window.clearTimeout(hintTimerId);
+    hintTimerId = null;
+  }
+}
+
+function clearHintSuggestion(): void {
+  if (!hintSuggestion) {
+    return;
+  }
+  hintSuggestion = null;
+  const hintedTiles = boardElement.querySelectorAll<HTMLDivElement>(".tile.hint-swap, .tile.hint-match");
+  hintedTiles.forEach((tile) => {
+    tile.classList.remove("hint-swap", "hint-match");
+  });
+}
+
+function resetHintSystem(): void {
+  clearHintTimer();
+  clearHintSuggestion();
+}
+
+function scheduleHintTimer(): void {
+  if (hintSuggestion || hintTimerId !== null) {
+    return;
+  }
+  if (!shouldAllowHint()) {
+    return;
+  }
+  hintTimerId = window.setTimeout(() => {
+    hintTimerId = null;
+    revealHintSuggestion();
+  }, HINT_DELAY_MS);
+}
+
+function revealHintSuggestion(): void {
+  if (!shouldAllowHint() || hintSuggestion) {
+    scheduleHintTimer();
+    return;
+  }
+
+  const board = game.getBoard();
+  const suggestion = findHintMove(board);
+  if (!suggestion) {
+    scheduleHintTimer();
+    return;
+  }
+
+  hintSuggestion = suggestion;
+  render();
+}
+
+function registerPlayerAction(): void {
+  clearHintTimer();
+  clearHintSuggestion();
+  scheduleHintTimer();
+}
+
+function toggleBooster(type: BoosterType): void {
+  const blockMessage = getInteractionBlockMessage();
+  if (blockMessage) {
+    infoMessage = blockMessage;
+    render();
+    return;
+  }
+
+  if (activeBooster === type) {
+    activeBooster = null;
+    boosterSelection = null;
+    infoMessage = "Booster dinonaktifkan.";
+    render();
+    return;
+  }
+
+  if (!game.canUseBooster(type)) {
+    activeBooster = null;
+    boosterSelection = null;
+    const inventory = game.getBoosters();
+    if (game.getStatus() !== "playing") {
+      infoMessage = "Booster hanya dapat digunakan ketika level berlangsung.";
+    } else if (inventory[type] <= 0) {
+      infoMessage = `${BOOSTER_INFO[type].label} habis.`;
+    } else {
+      infoMessage = `${BOOSTER_INFO[type].label} belum tersedia.`;
+    }
+    render();
+    return;
+  }
+
+  activeBooster = type;
+  boosterSelection = null;
+  selected = null;
+  infoMessage =
+    type === "hammer"
+      ? "Hammer aktif. Klik tile mana pun untuk menghancurkannya."
+      : "Free Switch aktif. Pilih dua tile bertetangga untuk ditukar gratis.";
+  render();
+}
+
 function render(): void {
   const status = game.getStatus();
   handleStatusChange(status);
+  if (status !== "playing" && (activeBooster || boosterSelection)) {
+    activeBooster = null;
+    boosterSelection = null;
+  }
   const activeFrame = playback ? playback.frames[playback.index] : null;
   const boardSnapshot = activeFrame ? activeFrame.board : game.getBoard();
   const highlight = activeFrame?.removed ?? [];
@@ -975,13 +1158,26 @@ function render(): void {
   const disableInput = isAnimating || tutorialActive;
   const jellyGrid = game.getJellyGrid();
   const crateGrid = game.getCrateGrid();
+  const boosterTargets =
+    activeBooster === "free-switch" && boosterSelection
+      ? getAdjacentPositions(boosterSelection).filter((pos) => isPositionInBounds(pos))
+      : [];
 
   renderHud();
+  renderBoosters(status);
   renderBoard(boardSnapshot, status, jellyGrid, crateGrid, {
     highlight,
     highlightType,
     disableInput,
-    selected
+    selected,
+    boosterMode: activeBooster,
+    boosterSelection,
+    boosterTargets: boosterTargets.length > 0 ? boosterTargets : undefined,
+    hintSwap:
+      hintSuggestion && status === "playing"
+        ? [hintSuggestion.primary, hintSuggestion.secondary]
+        : undefined,
+    hintMatch: hintSuggestion ? hintSuggestion.matches : undefined
   });
 
   infoBanner.textContent = infoMessage;
@@ -991,6 +1187,15 @@ function render(): void {
     tutorialOverlay.classList.remove("hidden");
   } else {
     tutorialOverlay.classList.add("hidden");
+  }
+
+  if (shouldAllowHint()) {
+    scheduleHintTimer();
+  } else {
+    clearHintTimer();
+    if (status !== "playing") {
+      clearHintSuggestion();
+    }
   }
 
   updateMenuView();
@@ -1047,6 +1252,57 @@ function renderHud(): void {
   hud.append(...items);
 }
 
+function renderBoosters(status: GameStatus): void {
+  const inventory = game.getBoosters();
+  (Object.keys(boosterButtons) as BoosterType[]).forEach((type) => {
+    const button = boosterButtons[type];
+    const countElement = boosterCounts[type];
+    const available = inventory[type];
+    countElement.textContent = `x${available}`;
+    const disabled =
+      status !== "playing" || tutorialActive || isAnimating || available <= 0;
+    button.disabled = disabled;
+    button.classList.toggle("active", !disabled && activeBooster === type);
+    button.classList.toggle("empty", available <= 0);
+    button.setAttribute("aria-pressed", (!disabled && activeBooster === type).toString());
+  });
+}
+
+function createBoosterButton(
+  type: BoosterType,
+  counterElement: HTMLSpanElement
+): HTMLButtonElement {
+  const info = BOOSTER_INFO[type];
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "booster-button";
+  button.dataset.booster = type;
+
+  const icon = document.createElement("span");
+  icon.className = "booster-icon";
+  icon.textContent = info.icon;
+
+  const label = document.createElement("span");
+  label.className = "booster-label";
+  label.textContent = info.label;
+
+  counterElement.className = "booster-count";
+  counterElement.textContent = "x0";
+
+  const textWrapper = document.createElement("span");
+  textWrapper.className = "booster-text";
+  textWrapper.append(label, counterElement);
+
+  button.append(icon, textWrapper);
+  button.title = info.description;
+  button.addEventListener("click", () => {
+    registerPlayerAction();
+    toggleBooster(type);
+  });
+
+  return button;
+}
+
 function createHudItem(label: string, value: string): HTMLDivElement {
   const container = document.createElement("div");
   container.className = "hud-item";
@@ -1082,6 +1338,17 @@ function renderBoard(
 
   const highlightKeys = new Set(options.highlight?.map(positionKey));
   const disableInput = options.disableInput || status !== "playing";
+  const hintSwapKeys = new Set(options.hintSwap?.map(positionKey));
+  const hintMatchKeys = new Set(options.hintMatch?.map(positionKey));
+  options.hintSwap?.forEach((pos) => {
+    hintMatchKeys.delete(positionKey(pos));
+  });
+  const boosterSelectionKey = options.boosterSelection
+    ? positionKey(options.boosterSelection)
+    : null;
+  const boosterTargetKeys = new Set(
+    options.boosterTargets?.map((pos) => positionKey(pos)) ?? []
+  );
 
   board.forEach((row, rowIndex) => {
     row.forEach((tile, colIndex) => {
@@ -1127,6 +1394,25 @@ function renderBoard(
         if (options.highlightType === "special") {
           tileElement.classList.add("combo");
         }
+      }
+
+      if (hintSwapKeys.has(key)) {
+        tileElement.classList.add("hint-swap");
+      } else if (hintMatchKeys.has(key)) {
+        tileElement.classList.add("hint-match");
+      }
+
+      if (boosterSelectionKey && key === boosterSelectionKey) {
+        tileElement.classList.add("booster-selected");
+        if (options.boosterMode) {
+          tileElement.dataset.boosterMode = options.boosterMode;
+        }
+      } else if (tileElement.dataset.boosterMode) {
+        tileElement.removeAttribute("data-booster-mode");
+      }
+
+      if (boosterTargetKeys.has(key)) {
+        tileElement.classList.add("booster-target");
       }
 
       if (options.selected && options.selected.row === rowIndex && options.selected.col === colIndex) {
@@ -1251,12 +1537,178 @@ function resetBoardAnimations(): void {
   });
 }
 
+function handleBoosterTileClick(position: Position): void {
+  if (!activeBooster) {
+    return;
+  }
+
+  const blockMessage = getInteractionBlockMessage();
+  if (blockMessage) {
+    infoMessage = blockMessage;
+    render();
+    return;
+  }
+
+  registerPlayerAction();
+  selected = null;
+
+  if (activeBooster === "hammer") {
+    boosterSelection = null;
+    const result = game.useHammer(position);
+    if (!result.success) {
+      handleBoosterFailure("hammer", result.reason);
+    } else {
+      handleBoosterResult("hammer", result);
+    }
+    if (!game.canUseBooster("hammer")) {
+      activeBooster = null;
+    }
+    return;
+  }
+
+  if (activeBooster === "free-switch") {
+    if (!boosterSelection) {
+      boosterSelection = position;
+      infoMessage = "Pilih tile tetangga untuk Free Switch.";
+      render();
+      return;
+    }
+
+    if (boosterSelection.row === position.row && boosterSelection.col === position.col) {
+      boosterSelection = null;
+      infoMessage = "Seleksi Free Switch dibatalkan.";
+      render();
+      return;
+    }
+
+    if (!positionsAreAdjacent(boosterSelection, position)) {
+      boosterSelection = position;
+      infoMessage = "Pilih dua tile bertetangga untuk Free Switch.";
+      render();
+      return;
+    }
+
+    const first = boosterSelection;
+    boosterSelection = null;
+    const result = game.useFreeSwitch(first, position);
+    if (!result.success) {
+      handleBoosterFailure("free-switch", result.reason);
+    } else {
+      handleBoosterResult("free-switch", result);
+    }
+    if (!game.canUseBooster("free-switch")) {
+      activeBooster = null;
+    }
+    return;
+  }
+}
+
+function handleBoosterResult(booster: BoosterType, result: SwapFeedback): void {
+  const label = BOOSTER_INFO[booster].label;
+  const cascades = result.cascades;
+  const specialCreated = cascades.flatMap((cascade) => cascade.createdSpecials);
+  let finalMessage: string;
+
+  if (cascades.length === 0) {
+    if (booster === "free-switch" && result.reason === "no-match") {
+      finalMessage = `${label}: Pertukaran gratis tidak menghasilkan match.`;
+    } else {
+      finalMessage = `${label}: Papan diperbarui.`;
+    }
+  } else {
+    const firstCascade = cascades[0];
+    const removalCount = firstCascade
+      ? firstCascade.removed.length + firstCascade.createdSpecials.length
+      : 0;
+    finalMessage = cascades.length > 1
+      ? `${label}: Kombo ${cascades.length} cascade! +${result.scoreGain} skor.`
+      : `${label}: ${removalCount} tile terhapus. +${result.scoreGain} skor.`;
+  }
+
+  if (specialCreated.length > 0) {
+    const labels = Array.from(new Set(specialCreated.map((item) => describeSpecial(item.special))));
+    finalMessage += ` | Special baru: ${formatSpecialList(labels)}`;
+  }
+
+  if (game.hasJellyTarget()) {
+    if (result.clearedJelly > 0) {
+      finalMessage += ` | Jelly bersih: ${result.clearedJelly}`;
+    }
+    finalMessage += ` | Jelly tersisa: ${result.jellyRemaining}`;
+  }
+
+  if (game.hasCrateTarget()) {
+    if (result.clearedCrate > 0) {
+      finalMessage += ` | Crate pecah: ${result.clearedCrate}`;
+    }
+    finalMessage += ` | Crate tersisa: ${result.crateRemaining}`;
+  }
+
+  const totalRemoved = cascades.reduce((sum, cascade) => sum + cascade.removed.length, 0);
+  const specialCount = specialCreated.length;
+  applyMissionDelta({
+    score: result.scoreGain,
+    match: totalRemoved,
+    special: specialCount,
+    jelly: result.clearedJelly,
+    crate: result.clearedCrate
+  });
+
+  selected = null;
+
+  if (result.frames.length <= 1) {
+    infoMessage = finalMessage;
+    render();
+    return;
+  }
+
+  startPlayback(result.frames, finalMessage);
+}
+
+function handleBoosterFailure(booster: BoosterType, reason: SwapFailureReason | undefined): void {
+  const label = BOOSTER_INFO[booster].label;
+  let message: string;
+
+  switch (reason) {
+    case "no-charge":
+      message = `${label} habis. Kumpulkan lagi untuk memakainya.`;
+      activeBooster = null;
+      boosterSelection = null;
+      break;
+    case "not-playing":
+      message = "Booster hanya dapat digunakan ketika level sedang berlangsung.";
+      activeBooster = null;
+      boosterSelection = null;
+      break;
+    case "invalid-target":
+      message = `${label}: Target tidak bisa digunakan.`;
+      break;
+    case "not-adjacent":
+      message = `${label}: Pilih dua tile yang saling bertetangga.`;
+      break;
+    case "out-of-bounds":
+      message = "Target berada di luar papan.";
+      break;
+    default:
+      message = `${label} tidak dapat digunakan sekarang.`;
+      break;
+  }
+
+  infoMessage = message;
+  render();
+}
+
 function onTilePointerDown(position: Position, event: PointerEvent): void {
   if (!event.isPrimary) {
     return;
   }
 
   if (event.pointerType === "mouse" && event.button !== 0) {
+    return;
+  }
+
+  if (activeBooster) {
+    event.preventDefault();
     return;
   }
 
@@ -1274,6 +1726,8 @@ function onTilePointerDown(position: Position, event: PointerEvent): void {
     render();
     return;
   }
+
+  registerPlayerAction();
 
   dragState = {
     start: position,
@@ -1376,6 +1830,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function attemptDirectSwap(start: Position, target: Position): void {
+  registerPlayerAction();
   void processSwap(start, target);
 }
 
@@ -1395,7 +1850,24 @@ function positionsAreAdjacent(a: Position, b: Position): boolean {
   return (rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1);
 }
 
+function getAdjacentPositions(position: Position): Position[] {
+  const candidates: Position[] = [
+    { row: position.row - 1, col: position.col },
+    { row: position.row + 1, col: position.col },
+    { row: position.row, col: position.col - 1 },
+    { row: position.row, col: position.col + 1 }
+  ];
+  return candidates.filter((pos) => isPositionInBounds(pos));
+}
+
 function onTileClick(position: Position, event?: MouseEvent): void {
+  if (activeBooster) {
+    event?.preventDefault();
+    suppressNextClick = false;
+    handleBoosterTileClick(position);
+    return;
+  }
+
   if (suppressNextClick) {
     suppressNextClick = false;
     event?.preventDefault();
@@ -1413,6 +1885,8 @@ function onTileClick(position: Position, event?: MouseEvent): void {
     render();
     return;
   }
+
+  registerPlayerAction();
 
   if (!selected) {
     selected = position;
@@ -1449,6 +1923,8 @@ async function processSwap(start: Position, target: Position): Promise<void> {
     render();
     return;
   }
+
+  resetHintSystem();
 
   swapInProgress = true;
   selected = null;
@@ -1603,6 +2079,7 @@ function startPlayback(frames: SwapFrame[], finalMessage: string): void {
   }
 
   cancelPlayback();
+  resetHintSystem();
 
   playback = {
     frames,
@@ -1744,6 +2221,8 @@ function describeSpecial(type: SpecialType): string {
       return "Bom 3x3";
     case "block":
       return "Ledakan 5x5";
+    case "color":
+      return "Color Bomb";
     default:
       return "Special";
   }
@@ -1868,7 +2347,10 @@ function buildMissionItem(mission: MissionDefinition, progress: MissionProgress)
     const claimButton = document.createElement("button");
     claimButton.className = "mission-claim";
     claimButton.textContent = `Klaim +${mission.reward}`;
-    claimButton.addEventListener("click", () => handleMissionClaim(mission));
+    claimButton.addEventListener("click", () => {
+      registerPlayerAction();
+      handleMissionClaim(mission);
+    });
     item.append(claimButton);
   }
 

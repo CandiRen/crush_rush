@@ -9,21 +9,58 @@ import {
   createBoardFromLayout,
   createInitialBoard,
   ensurePlayableBoard,
-  TileLayout
+  TileLayout,
+  forceSwap,
+  hammerTile
 } from "./board";
 import type { LevelDefinition } from "./levels";
 
 export type GameStatus = "loading" | "playing" | "won" | "lost";
 
+export type BoosterType = "hammer" | "free-switch";
+export type BoosterInventory = Record<BoosterType, number>;
+
+const DEFAULT_BOOSTERS: BoosterInventory = {
+  hammer: 3,
+  "free-switch": 3
+};
+
+function normalizeBoosterCount(value: number | undefined, fallback: number): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return fallback;
+  }
+  return Math.floor(numeric);
+}
+
+function normalizeBoosterInventory(
+  source?: Partial<Record<BoosterType, number>>
+): BoosterInventory {
+  return {
+    hammer: normalizeBoosterCount(source?.hammer, DEFAULT_BOOSTERS.hammer),
+    "free-switch": normalizeBoosterCount(
+      source?.["free-switch"],
+      DEFAULT_BOOSTERS["free-switch"]
+    )
+  };
+}
+
 export interface GameConfig {
   size: number;
   moves: number;
   targetScore: number;
+  boosters?: Partial<Record<BoosterType, number>>;
 }
+
+export type SwapFailureReason =
+  | SwapResult["reason"]
+  | "no-charge"
+  | "invalid-target"
+  | "not-playing";
 
 export interface SwapFeedback {
   success: boolean;
-  reason?: SwapResult["reason"];
+  reason?: SwapFailureReason;
   cascades: CascadeDetail[];
   scoreGain: number;
   movesLeft: number;
@@ -56,6 +93,7 @@ export class Game {
   private crateGrid: number[][] = [];
   private initialCrateCount = 0;
   private highestCombo = 0;
+  private boosters: BoosterInventory = { ...DEFAULT_BOOSTERS };
 
   constructor(level: LevelDefinition, config?: Partial<GameConfig>) {
     this.level = level;
@@ -130,6 +168,17 @@ export class Game {
     return this.crateGrid.map((row) => [...row]);
   }
 
+  public getBoosters(): BoosterInventory {
+    return {
+      hammer: this.boosters.hammer,
+      "free-switch": this.boosters["free-switch"]
+    };
+  }
+
+  public canUseBooster(type: BoosterType): boolean {
+    return this.status === "playing" && this.hasBoosterCharges(type);
+  }
+
   public getLevel(): LevelDefinition {
     return this.level;
   }
@@ -180,70 +229,83 @@ export class Game {
 
   public trySwap(a: Position, b: Position): SwapFeedback {
     if (this.status !== "playing") {
-      return {
-        success: false,
-        reason: "out-of-bounds",
-        cascades: [],
-        scoreGain: 0,
-        movesLeft: this.movesLeft,
-        status: this.getStatus(),
-        totalScore: this.score,
-        frames: [],
-        clearedJelly: 0,
-        jellyRemaining: this.getJellyRemaining(),
-        clearedJellyPositions: [],
-        clearedCrate: 0,
-        crateRemaining: this.getCrateRemaining(),
-        clearedCratePositions: []
-      };
+      return this.buildFailureFeedback("not-playing");
     }
 
     const swapResult: SwapResult = attemptSwap(this.boardState, a, b);
 
     if (!swapResult.valid) {
-      return {
-        success: false,
-        reason: swapResult.reason,
-        cascades: [],
-        scoreGain: 0,
-        movesLeft: this.movesLeft,
-        status: this.getStatus(),
-        totalScore: this.score,
-        frames: [],
-        clearedJelly: 0,
-        jellyRemaining: this.getJellyRemaining(),
-        clearedJellyPositions: [],
-        clearedCrate: 0,
-        crateRemaining: this.getCrateRemaining(),
-        clearedCratePositions: []
-      };
+      return this.buildFailureFeedback(swapResult.reason ?? "no-match");
     }
 
     this.score += swapResult.totalScore;
     this.movesLeft = Math.max(0, this.movesLeft - 1);
     this.highestCombo = Math.max(this.highestCombo, swapResult.cascades.length);
 
-    const jellyStats = this.applyJellyFromCascades(swapResult.cascades);
-    const crateStats = this.applyCrateFromCascades(swapResult.cascades);
-    const jellyRemaining = this.getJellyRemaining();
-    const crateRemaining = this.getCrateRemaining();
-    const currentStatus = this.getStatus();
+    return this.buildSuccessFeedback(
+      swapResult.cascades,
+      swapResult.frames,
+      swapResult.totalScore
+    );
+  }
 
-    return {
-      success: true,
-      cascades: swapResult.cascades,
-      scoreGain: swapResult.totalScore,
-      movesLeft: this.movesLeft,
-      status: currentStatus,
-      totalScore: this.score,
-      frames: swapResult.frames,
-      clearedJelly: jellyStats.cleared,
-      jellyRemaining,
-      clearedJellyPositions: jellyStats.positions,
-      clearedCrate: crateStats.cleared,
-      crateRemaining,
-      clearedCratePositions: crateStats.positions
-    };
+  public useHammer(position: Position): SwapFeedback {
+    if (this.status !== "playing") {
+      return this.buildFailureFeedback("not-playing");
+    }
+
+    if (!this.hasBoosterCharges("hammer")) {
+      return this.buildFailureFeedback("no-charge");
+    }
+
+    if (!this.isPositionInBounds(position)) {
+      return this.buildFailureFeedback("out-of-bounds");
+    }
+
+    const hammerResult = hammerTile(this.boardState, position);
+    if (!hammerResult) {
+      return this.buildFailureFeedback("invalid-target");
+    }
+
+    this.spendBooster("hammer");
+    this.score += hammerResult.totalScore;
+    this.highestCombo = Math.max(this.highestCombo, hammerResult.cascades.length);
+
+    return this.buildSuccessFeedback(
+      hammerResult.cascades,
+      hammerResult.frames,
+      hammerResult.totalScore
+    );
+  }
+
+  public useFreeSwitch(a: Position, b: Position): SwapFeedback {
+    if (this.status !== "playing") {
+      return this.buildFailureFeedback("not-playing");
+    }
+
+    if (!this.hasBoosterCharges("free-switch")) {
+      return this.buildFailureFeedback("no-charge");
+    }
+
+    if (!this.isPositionInBounds(a) || !this.isPositionInBounds(b)) {
+      return this.buildFailureFeedback("out-of-bounds");
+    }
+
+    if (!this.positionsAreAdjacent(a, b)) {
+      return this.buildFailureFeedback("not-adjacent");
+    }
+
+    const swapResult = forceSwap(this.boardState, a, b);
+    this.spendBooster("free-switch");
+    this.score += swapResult.totalScore;
+    this.highestCombo = Math.max(this.highestCombo, swapResult.cascades.length);
+
+    return this.buildSuccessFeedback(
+      swapResult.cascades,
+      swapResult.frames,
+      swapResult.totalScore,
+      swapResult.reason
+    );
   }
 
   private applyLevel(level: LevelDefinition): void {
@@ -251,7 +313,8 @@ export class Game {
     this.config = {
       size,
       moves: level.moves,
-      targetScore: level.targetScore
+      targetScore: level.targetScore,
+      boosters: this.config.boosters
     };
 
     this.boardState = level.layout
@@ -268,6 +331,82 @@ export class Game {
     this.score = 0;
     this.movesLeft = this.config.moves;
     this.highestCombo = 0;
+    this.boosters = normalizeBoosterInventory(this.config.boosters);
+  }
+
+  private buildFailureFeedback(reason: SwapFailureReason): SwapFeedback {
+    return {
+      success: false,
+      reason,
+      cascades: [],
+      scoreGain: 0,
+      movesLeft: this.movesLeft,
+      status: this.getStatus(),
+      totalScore: this.score,
+      frames: [],
+      clearedJelly: 0,
+      jellyRemaining: this.getJellyRemaining(),
+      clearedJellyPositions: [],
+      clearedCrate: 0,
+      crateRemaining: this.getCrateRemaining(),
+      clearedCratePositions: []
+    };
+  }
+
+  private buildSuccessFeedback(
+    cascades: CascadeDetail[],
+    frames: SwapFrame[],
+    scoreGain: number,
+    reason?: SwapFailureReason
+  ): SwapFeedback {
+    const jellyStats = this.applyJellyFromCascades(cascades);
+    const crateStats = this.applyCrateFromCascades(cascades);
+    const jellyRemaining = this.getJellyRemaining();
+    const crateRemaining = this.getCrateRemaining();
+    const status = this.getStatus();
+
+    return {
+      success: true,
+      reason,
+      cascades,
+      scoreGain,
+      movesLeft: this.movesLeft,
+      status,
+      totalScore: this.score,
+      frames,
+      clearedJelly: jellyStats.cleared,
+      jellyRemaining,
+      clearedJellyPositions: jellyStats.positions,
+      clearedCrate: crateStats.cleared,
+      crateRemaining,
+      clearedCratePositions: crateStats.positions
+    };
+  }
+
+  private hasBoosterCharges(type: BoosterType): boolean {
+    return (this.boosters[type] ?? 0) > 0;
+  }
+
+  private spendBooster(type: BoosterType): void {
+    if (this.boosters[type] > 0) {
+      this.boosters[type] -= 1;
+    }
+  }
+
+  private isPositionInBounds(position: Position): boolean {
+    const size = this.boardState.length;
+    return (
+      position.row >= 0 &&
+      position.col >= 0 &&
+      position.row < size &&
+      position.col < size
+    );
+  }
+
+  private positionsAreAdjacent(a: Position, b: Position): boolean {
+    const rowDiff = Math.abs(a.row - b.row);
+    const colDiff = Math.abs(a.col - b.col);
+    return (rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1);
   }
 
   private boardFromLayout(layout: TileLayout): Board {

@@ -6,7 +6,8 @@ Crush Rush adalah prototipe game puzzle match-3 bertema hewan lucu yang dibangun
 
 ## Fitur Utama
 - Gameplay match-3 klasik dengan grid dinamis; generator papan memastikan tidak ada deadlock awal.
-- Special candy (`line-row`, `line-col`, `bomb`, `block`) lengkap dengan efek kaskade dan skor kombo.
+- Special candy (`line-row`, `line-col`, `bomb`, `block`, `color`) lengkap dengan efek kaskade dan skor kombo.
+- Booster in-level seperti Lollipop Hammer dan Free Switch untuk menyelamatkan situasi kritis.
 - Target level variatif: skor, jelly multi-layer, dan peti dengan tingkat ketebalan berbeda.
 - Sistem skor berbintang, statistik combo tertinggi, dan efisiensi poin per langkah.
 - Profil pemain tersimpan di `localStorage`, termasuk progres level, bintang terbaik, dan soft currency.
@@ -46,7 +47,8 @@ Crush Rush adalah prototipe game puzzle match-3 bertema hewan lucu yang dibangun
 
 ## Mekanika Permainan
 - Tukar dua tile yang berdampingan untuk membuat tiga atau lebih tile sejenis.
-- Match 4 atau pola L/T menghasilkan special candy dengan efek garis atau bom.
+- Match 4 atau pola L/T menghasilkan special candy dengan efek garis atau bom, sedangkan match 5 sejenis menghadiahkan Color Bomb.
+- Booster dapat dipakai saat permainan: Hammer menghancurkan tile apa pun, sedangkan Free Switch menukar dua tile tanpa mengurangi langkah.
 - Jelly dan peti membutuhkan beberapa clear; status target ditampilkan di HUD.
 - Habiskan level dengan mencapai target skor dan membersihkan semua rintangan sebelum langkah habis.
 - Setelah level selesai, pemain menerima ringkasan skor, bintang, dan progress misi.
